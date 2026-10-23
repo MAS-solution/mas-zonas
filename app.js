@@ -81,7 +81,7 @@
       if (LOCAL) {
         clientes = await (await fetch('datos/local/clientes.json')).json();
         window._localAsig = await (await fetch('datos/local/asignacion.json')).json();
-        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => b - a);
+        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : b - a);
       } else {
         clientes = await traerTodo('zonas_clientes', 'codigo,cliente,vendedor,segmento,fact_mes,estado,lat,lng,manzana');
         if (!RECUPERO) {
@@ -91,7 +91,7 @@
         recGuardado = new Set(recup);
         const { data, error } = await sb.from('zonas_asignacion').select('escenario').eq('manzana', 0);
         if (error) throw error;
-        escenarios = data.map(r => r.escenario).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => b - a);
+        escenarios = data.map(r => r.escenario).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : b - a);
         if (!escenarios.length) throw new Error(RECUPERO ? 'todavía no están cargadas las zonas de recupero' : 'no hay escenarios');
       }
       esc = escenarios[0];
@@ -178,6 +178,11 @@
     return vista === 'zonasDia' ? COL_ZONA[(g - 1) % COL_ZONA.length] : COL_DIA[g - 1];
   }
   const nZonas = () => esc;
+  // recupero quincenal (escenario 8): zona 2v-1 = vendedor v semana A, zona 2v = semana B
+  const quincenal = () => RECUPERO && esc === 8;
+  const nomZona = z => quincenal() ? `V${Math.ceil(z / 2)} · semana ${z % 2 ? 'A' : 'B'}` : `Zona ${z}`;
+  const cortoZona = z => quincenal() ? `V${Math.ceil(z / 2)}${z % 2 ? 'A' : 'B'}` : `Z${z}`;
+  const nomEsc = e => RECUPERO && e === 8 ? '4 vendedores · quincenal' : `${e} vendedores`;
 
   // ---------- Mapa ----------
   function armarMapa() {
@@ -287,7 +292,7 @@
     }
     return [...acc.values()].map(a => ({
       x: a.x / a.n, y: a.y / a.n,
-      t: vista === 'dias' ? `Z${a.z}` : vista === 'zonasDia' ? `Z${a.z}` : DIAS[a.d - 1].slice(0, 3),
+      t: vista === 'zona' ? DIAS[a.d - 1].slice(0, 3) : cortoZona(a.z),
       c: vista === 'zonasDia' ? COL_ZONA[(a.z - 1) % COL_ZONA.length] : COL_DIA[a.d - 1],
     }));
   }
@@ -404,7 +409,7 @@
     const cs = porManzana[id];
     box.textContent = '';
     const add = (t, b) => { const el = document.createElement(b ? 'b' : 'div'); el.textContent = t; box.appendChild(el); };
-    add(`Zona ${A.zona[id]} · ${DIAS[A.dia[id] - 1]}`, true);
+    add(`${nomZona(A.zona[id])} · ${DIAS[A.dia[id] - 1]}`, true);
     add(`${peso[id]} clientes de visita${telPorManzana[id] ? ` · ${telPorManzana[id]} telefónicos` : ''}`);
     for (const c of cs.slice(0, 8)) add(`#${c.codigo} ${c.cliente} · V${c.vendedor}${c.estado === 'Visita' ? '' : ' · ' + c.estado.toLowerCase()}${recup.has(c.codigo) ? ' · a recuperar' : ''}`);
     if (cs.length > 8) add(`y ${cs.length - 8} más`);
@@ -420,7 +425,7 @@
     ir.href = '?' + q.toString(); ir.textContent = RECUPERO ? 'Ir a zonas de visita' : 'Ir a recupero de telefónicos';
     const eb = $('#esc-btns');
     for (const e of escenarios) {
-      const b = document.createElement('button'); b.type = 'button'; b.textContent = `${e} vendedores`; b.dataset.esc = e;
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = nomEsc(e); b.dataset.esc = e;
       b.addEventListener('click', async () => { estado('Cargando…'); await cargarAsignacion(e); esc = e; destino = null; estado(''); armarSelects(); refrescar(); });
       eb.appendChild(b);
     }
@@ -456,11 +461,11 @@
   }
   function armarSelects() {
     const sz = $('#sel-zona'); sz.textContent = '';
-    for (let z = 1; z <= nZonas(); z++) sz.appendChild(new Option('Zona ' + z, z));
+    for (let z = 1; z <= nZonas(); z++) sz.appendChild(new Option(nomZona(z), z));
     if (zonaSel > nZonas()) zonaSel = 1;
     sz.value = zonaSel;
     const rz = $('#ruta-zona'), ant = Number(rz.value) || zonaSel; rz.textContent = '';
-    for (let z = 1; z <= nZonas(); z++) rz.appendChild(new Option('Zona ' + z, z));
+    for (let z = 1; z <= nZonas(); z++) rz.appendChild(new Option(nomZona(z), z));
     rz.value = ant <= nZonas() ? ant : 1;
   }
 
@@ -493,8 +498,8 @@
     const box = $('#destinos'); box.textContent = '';
     let items = [];
     if (vista === 'dias') { $('#destino-tit').textContent = RECUPERO ? 'Días (telefónicos)' : 'Días (clientes de visita)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
-    else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: `Zona ${z}`, extra: `${num(tot.get(z) || 0)} en la semana` }); }
-    else { $('#destino-tit').textContent = `Días de la zona ${zonaSel} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
+    else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: nomZona(z), extra: `${num(tot.get(z) || 0)} en ${quincenal() ? 'su semana' : 'la semana'}` }); }
+    else { $('#destino-tit').textContent = `Días de ${quincenal() ? nomZona(zonaSel) : 'la zona ' + zonaSel} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     const vals = items.map(it => c.get(it.g) || 0), prom = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
     for (const it of items) {
       const d = document.createElement('div');
@@ -576,7 +581,7 @@
     for (const c of clientes.filter(c => c.codigo === q || c.cliente.toLowerCase().includes(q)).slice(0, 8)) {
       const b = document.createElement('button'); b.type = 'button';
       const A = asig[esc];
-      b.textContent = `#${c.codigo} ${c.cliente} · zona ${A.zona[c.manzana]} · ${DIAS[A.dia[c.manzana] - 1].toLowerCase()}`;
+      b.textContent = `#${c.codigo} ${c.cliente} · ${nomZona(A.zona[c.manzana]).toLowerCase()} · ${DIAS[A.dia[c.manzana] - 1].toLowerCase()}`;
       b.addEventListener('click', () => { map.setView([c.lat, c.lng], 17); mostrarInfo(c.manzana); });
       box.appendChild(b);
     }
@@ -614,9 +619,9 @@
   }
   function exportarKML() {
     const A = asig[esc], grupos = [];
-    if (vista === 'zona') DIAS.forEach((d, i) => grupos.push({ n: `Zona ${zonaSel} - ${d}`, f: id => A.zona[id] === zonaSel && A.dia[id] === i + 1, c: COL_DIA[i] }));
-    else if (vista === 'zonasDia') for (let z = 1; z <= nZonas(); z++) grupos.push({ n: `Zona ${z} - ${DIAS[diaSel]}`, f: id => A.zona[id] === z && A.dia[id] === diaSel + 1, c: COL_ZONA[(z - 1) % COL_ZONA.length] });
-    else for (let z = 1; z <= nZonas(); z++) for (let d = 1; d <= 5; d++) grupos.push({ n: `Zona ${z} - ${DIAS[d - 1]}`, f: id => A.zona[id] === z && A.dia[id] === d, c: COL_DIA[d - 1] });
+    if (vista === 'zona') DIAS.forEach((d, i) => grupos.push({ n: `${nomZona(zonaSel)} - ${d}`, f: id => A.zona[id] === zonaSel && A.dia[id] === i + 1, c: COL_DIA[i] }));
+    else if (vista === 'zonasDia') for (let z = 1; z <= nZonas(); z++) grupos.push({ n: `${nomZona(z)} - ${DIAS[diaSel]}`, f: id => A.zona[id] === z && A.dia[id] === diaSel + 1, c: COL_ZONA[(z - 1) % COL_ZONA.length] });
+    else for (let z = 1; z <= nZonas(); z++) for (let d = 1; d <= 5; d++) grupos.push({ n: `${nomZona(z)} - ${DIAS[d - 1]}`, f: id => A.zona[id] === z && A.dia[id] === d, c: COL_DIA[d - 1] });
     const kmlCol = h => 'aa' + h.slice(5, 7) + h.slice(3, 5) + h.slice(1, 3);
     let pm = '';
     for (const g of grupos) {
@@ -625,14 +630,14 @@
         + rings.map(r => `<Polygon><outerBoundaryIs><LinearRing><coordinates>${r.map(p => p[0] + ',' + p[1]).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon>`).join('')
         + '</MultiGeometry></Placemark>\n';
     }
-    descargar(`zonas_${RECUPERO ? 'recupero_' : ''}${esc}_vendedores.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${esc} vendedores</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
+    descargar(`zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : esc + '_vendedores'}.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${nomEsc(esc)}</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
   }
   function exportarCSV() {
     const A = asig[esc];
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
-    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', RECUPERO ? 'cuenta_en_recupero' : 'en_ruta', 'fact_mes', 'zona', 'dia']];
-    for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, recup.has(c.codigo) ? 'si' : 'no', enRuta(c) ? 'si' : 'no', Math.round(c.fact_mes), A.zona[c.manzana], DIAS[A.dia[c.manzana] - 1]]);
-    descargar(`clientes_zonas_${RECUPERO ? 'recupero_' : ''}${esc}_vendedores.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', RECUPERO ? 'cuenta_en_recupero' : 'en_ruta', 'fact_mes', 'zona', 'zona_nombre', 'dia']];
+    for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, recup.has(c.codigo) ? 'si' : 'no', enRuta(c) ? 'si' : 'no', Math.round(c.fact_mes), A.zona[c.manzana], nomZona(A.zona[c.manzana]), DIAS[A.dia[c.manzana] - 1]]);
+    descargar(`clientes_zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : esc + '_vendedores'}.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   // ---------- Ruta de una zona en un día ----------
@@ -676,7 +681,7 @@
     }).addTo(rutaCapa));
     map.fitBounds(L.latLngBounds(o.map(c => [c.lat, c.lng])), { padding: [40, 40] });
     const nr = o.filter(c => recup.has(c.codigo)).length;
-    $('#ruta-info').textContent = `Zona ${z} · ${DIAS[d - 1]}: ${o.length} clientes${nr ? ` (${nr} a recuperar)` : ''}, unos ${(tot * 1.3).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km del primero al último.`;
+    $('#ruta-info').textContent = `${nomZona(z)} · ${DIAS[d - 1]}: ${o.length} clientes${nr ? ` (${nr} a recuperar)` : ''}, unos ${(tot * 1.3).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km del primero al último.`;
     $('#btn-ruta-csv').disabled = $('#btn-ruta-quitar').disabled = false;
   }
   function quitarRuta() {

@@ -223,4 +223,20 @@ for i in range(n): cz[zona[i]] += peso[i]; cd[(zona[i], dia[i])] += peso[i]
 print('recupero', len(tel), 'telefónicos ·', REC, 'zonas', sorted(cz.values()), '· por día', [[cd[(z, d)] for d in range(5)] for z in range(REC)],
       f'· coinciden con su día del maestro {100 * igual / len(tel):.0f}%')
 res[REC] = [[int(zona[i]) + 1, int(dia[i]) + 1] for i in range(n)]
+
+# Recupero quincenal: los mismos 4 vendedores visitan cada telefónico cada dos semanas. Cada pedazo
+# (vendedor, día) se parte en dos con un corte recto: semana A y semana B. Se guarda como escenario 8
+# (8 zonas = 4 vendedores × 2 semanas; zona 2v-1 = vendedor v semana A, zona 2v = semana B).
+QUIN = 2 * REC
+zq = np.zeros(n, int)
+for v in range(REC):
+    for d in range(5):
+        idx = np.where((zona == v) & (dia == d))[0]
+        if len(idx) == 0: continue
+        a_, b_ = cortes_rectos(idx, 2)
+        zq[a_] = 2 * v; zq[b_] = 2 * v + 1
+cq = collections.Counter(); cqd = collections.Counter()
+for i in range(n): cq[zq[i]] += peso[i]; cqd[(zq[i], dia[i])] += peso[i]
+print('quincenal', [(f'V{z // 2 + 1}{"AB"[z % 2]}', cq[z]) for z in range(QUIN)], '· por día', [[cqd[(z, d)] for d in range(5)] for z in range(QUIN)])
+res[QUIN] = [[int(zq[i]) + 1, int(dia[i]) + 1] for i in range(n)]
 json.dump(res, open('asignacion.json', 'w'), separators=(',', ':'))
