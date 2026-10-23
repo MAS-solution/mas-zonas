@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAS Zonas</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <h1>MAS Zonas</h1>
+      <p class="muted">Zonas y días de visita por manzana.</p>
+      <label>Usuario<input id="login-email" type="email" autocomplete="username" required></label>
+      <label>Contraseña<input id="login-pass" type="password" autocomplete="current-password" required></label>
+      <button type="submit" class="btn primary">Entrar</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <div id="cargando" class="cargando">Cargando manzanas y clientes…</div>
+
+  <main id="app" class="app" hidden>
+    <aside class="panel">
+      <header class="panel-head">
+        <h1>MAS Zonas</h1>
+        <button id="btn-salir" class="btn ghost small" type="button">Salir</button>
+      </header>
+
+      <div class="campo">
+        <span class="etq">Escenario</span>
+        <div class="seg" id="esc-btns" role="group" aria-label="Escenario"></div>
+      </div>
+
+      <div class="campo">
+        <span class="etq">Vista</span>
+        <div class="seg" role="group" aria-label="Vista">
+          <button type="button" data-vista="dias" aria-pressed="true">Días</button>
+          <button type="button" data-vista="zonasDia" aria-pressed="false">Zonas de un día</button>
+          <button type="button" data-vista="zona" aria-pressed="false">Una zona</button>
+        </div>
+        <select id="sel-dia" aria-label="Día" hidden></select>
+        <select id="sel-zona" aria-label="Zona" hidden></select>
+        <p class="ayuda">Cada zona (vendedor) tiene 5 partes, una por día. El día de cada cliente es el que ya tiene en la ruta de Gescom.</p>
+      </div>
+
+      <div class="campo">
+        <span class="etq">Herramienta</span>
+        <div class="seg" role="group" aria-label="Herramienta">
+          <button type="button" data-tool="mover" aria-pressed="true">Mover mapa</button>
+          <button type="button" data-tool="pincel" aria-pressed="false">Pincel</button>
+          <button type="button" data-tool="lazo" aria-pressed="false">Lazo</button>
+        </div>
+        <p class="ayuda" id="ayuda-tool">Arrastrá para moverte. Tocá una manzana para ver su zona y día.</p>
+      </div>
+
+      <div class="campo">
+        <span class="etq" id="destino-tit">Pintar con</span>
+        <div id="destinos" class="destinos"></div>
+      </div>
+
+      <div class="acciones">
+        <button id="btn-deshacer" class="btn" type="button" disabled>Deshacer</button>
+        <button id="btn-guardar" class="btn primary" type="button" disabled>Guardar</button>
+      </div>
+      <p id="estado" class="estado"></p>
+
+      <div class="campo">
+        <span class="etq">Mostrar</span>
+        <label class="ck"><input type="checkbox" id="ck-cli" checked> Clientes de visita</label>
+        <label class="ck"><input type="checkbox" id="ck-tel"> Telefónicos</label>
+        <label class="ck"><input type="checkbox" id="ck-otras" checked> El resto en gris</label>
+      </div>
+
+      <div class="campo">
+        <span class="etq">Buscar cliente</span>
+        <input id="buscar" type="search" placeholder="Código o nombre" autocomplete="off">
+        <div id="resultados" class="resultados"></div>
+      </div>
+
+      <div class="campo">
+        <span class="etq">Exportar</span>
+        <div class="acciones">
+          <button id="btn-kml" class="btn" type="button">KML para AXUM</button>
+          <button id="btn-csv" class="btn" type="button">CSV de clientes</button>
+        </div>
+        <p class="ayuda">El KML sale con la vista actual: todas las zonas por día, las zonas del día elegido, o los 5 días de una zona.</p>
+      </div>
+    </aside>
+    <section class="mapa-wrap">
+      <div id="mapa"></div>
+      <div id="info" class="info" hidden></div>
+    </section>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
