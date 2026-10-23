@@ -143,9 +143,64 @@ def emparejar(piezas, N):
         zona[idx] = [mapa[d][k] for k in piezas[d][idx]]
     return zona
 
+def componentes(lab):
+    vis = np.zeros(n, bool); comps = []
+    for s in range(n):
+        if vis[s]: continue
+        q = [s]; vis[s] = True; c = []
+        while q:
+            i = q.pop(); c.append(i)
+            for j in vec[i]:
+                if not vis[j] and lab[j] == lab[i]: vis[j] = True; q.append(j)
+        comps.append(np.array(c))
+    return comps
+
+def limpiar_islas(zona, dia, max_chica=10, max_lejos=0):
+    """Pedazos sueltos de una zona-día (separados del resto de su pedazo): si son chicos o quedan más
+    cerca de otra zona que de la propia, pasan a la zona y el día del pedazo que los rodea, aunque eso
+    les cambie el día de visita."""
+    zona = zona.copy(); dia = dia.copy(); movidos = 0
+    for _ in range(10):
+        lab = zona * 10 + dia; cambio = False
+        comps = componentes(lab)
+        grande = {}
+        for c in comps:
+            l = lab[c[0]]; w = peso[c].sum()
+            if l not in grande or w > grande[l][0]: grande[l] = (w, c)
+        for c in comps:
+            l = lab[c[0]]
+            if grande[l][1] is c: continue
+            w = peso[c].sum()
+            borde = collections.Counter(lab[j] for i in c for j in vec[i] if lab[j] != l)
+            if w > 0:
+                cc = cxy[c[peso[c] > 0]].mean(0)
+                otros = np.where((lab != l) & (peso > 0))[0]
+                propio = grande[l][1][peso[grande[l][1]] > 0]
+                d_otro = np.sqrt(((cxy[otros] - cc) ** 2).sum(1)).min()
+                d_prop = np.sqrt(((cxy[propio] - cc) ** 2).sum(1)).min() if len(propio) else 1e9
+                if w > max_chica and not (w <= max_lejos and d_otro < d_prop): continue
+                if not borde: borde = collections.Counter([lab[otros[np.argmin(((cxy[otros] - cc) ** 2).sum(1))]]])
+            elif not borde: continue
+            nuevo = borde.most_common(1)[0][0]
+            zona[c] = nuevo // 10; dia[c] = nuevo % 10; movidos += w; cambio = True
+            lab[c] = nuevo
+        if not cambio: break
+    return zona, dia, movidos
+
+# Clientes sueltos de un día metidos en el sector de otro día (grupitos de 1 o 2) pasan al día que los rodea
+_, dia, mov = limpiar_islas(np.zeros(n, int), dia, max_chica=2)
+igual = sum(1 for r in visita if DIA_G.get(r['codigo']) == dia[cm[r['codigo']]])
+print('sueltos de día reubicados', mov, '· mantienen su día', f'{100 * igual / len(visita):.1f}%')
 res = {}
+dia0 = dia.copy()
 for N in ESC:
+    dia = dia0
     zona = emparejar([zonas_del_dia(d, N) for d in range(5)], N)
+    zona, dia, mov = limpiar_islas(zona, dia0, max_chica=3, max_lejos=10)
+    # volver a emparejar los pedazos ya limpios para que los totales de la semana queden parejos
+    zona = emparejar([zona] * 5, N)
+    igual = sum(1 for r in visita if DIA_G.get(r['codigo']) == dia[cm[r['codigo']]])
+    print(N, 'clientes de pedazos sueltos reubicados', mov, '· mantienen su día', f'{100 * igual / len(visita):.1f}%')
     cz = collections.Counter(); cd = collections.Counter()
     for i in range(n): cz[zona[i]] += peso[i]; cd[(zona[i], dia[i])] += peso[i]
     por_dia = [[cd[(z, d)] for z in range(N)] for d in range(5)]
