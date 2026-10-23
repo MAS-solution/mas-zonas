@@ -47,6 +47,7 @@ select,input[type=search]{padding:8px 10px;border:1px solid var(--line);border-r
 .acciones{display:flex;gap:8px;flex-wrap:wrap}
 .estado{font-size:12px;color:var(--ink-soft);margin:0;min-height:1em}
 .ck{display:flex;gap:6px;align-items:center;font-size:13px}
+.dot-ck{width:10px;height:10px;border-radius:50%;flex:none}
 
 .destinos{display:grid;gap:2px;max-height:38vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px}
 .dest{display:grid;grid-template-columns:14px 1fr auto auto;gap:8px;align-items:center;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:13px;border:1px solid transparent}

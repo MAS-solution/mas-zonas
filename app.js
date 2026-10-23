@@ -230,15 +230,16 @@
     ctx.strokeStyle = 'rgba(20,33,61,.55)'; ctx.lineWidth = 1 / k; ctx.stroke(finos);
     ctx.strokeStyle = '#14213d'; ctx.lineWidth = 2.4 / k; ctx.stroke(gruesos);
     // clientes
-    const verCli = $('#ck-cli').checked, verTel = $('#ck-tel').checked;
+    const verCli = $('#ck-cli').checked, ver700 = $('#ck-tel700').checked, verD = $('#ck-telD').checked;
     const r = Math.max(1.6, Math.min(4.5, (map.getZoom() - 10) * 0.9)) / k;
     for (const c of clientes) {
       if (c.wx < vx0 || c.wx > vx1 || c.wy < vy0 || c.wy > vy1) continue;
       const vis = c.estado === 'Visita';
-      if (vis ? !verCli : !(verTel && c.estado.startsWith('Telefónico'))) continue;
+      const t700 = c.estado === 'Telefónico (camión 700)', tD = c.estado === 'Telefónico';
+      if (vis ? !verCli : !((ver700 && t700) || (verD && tD))) continue;
       if (vis && vista !== 'dias' && !grupo(c.manzana) && !otras) continue;
       ctx.beginPath(); ctx.arc(c.wx, c.wy, r, 0, Math.PI * 2);
-      ctx.fillStyle = vis ? (colorGrupo(grupo(c.manzana)) || '#6b7280') : '#111';
+      ctx.fillStyle = vis ? (colorGrupo(grupo(c.manzana)) || '#6b7280') : t700 ? '#111' : '#7c3aed';
       ctx.fill(); ctx.lineWidth = r * 0.45; ctx.strokeStyle = '#fff'; ctx.stroke();
     }
     // etiquetas
@@ -373,7 +374,7 @@
     document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => { herramienta = b.dataset.tool; refrescar(); }));
     $('#sel-dia').addEventListener('change', e => { diaSel = Number(e.target.value); destino = null; refrescar(); });
     $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); destino = null; refrescar(); encuadrarZona(); });
-    ['#ck-cli', '#ck-tel', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
+    ['#ck-cli', '#ck-tel700', '#ck-telD', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
     $('#btn-deshacer').addEventListener('click', deshacer);
     $('#btn-guardar').addEventListener('click', guardar);
     $('#btn-kml').addEventListener('click', exportarKML);
