@@ -6,7 +6,10 @@
   const COL_ZONA = ['#4f8ef7', '#f7614f', '#3fb67e', '#c74fa8', '#e6a817', '#17a2b8', '#a0522d', '#7b4fc7', '#d94f6b', '#2e7d32',
     '#ff8f00', '#5c6bc0', '#8d6e63', '#00897b', '#c0ca33', '#6d4c41', '#ec407a', '#26a69a', '#7e57c2', '#9e9d24'];
   const LOCAL = new URLSearchParams(location.search).has('local');
+  // ?modo=recupero: zonas para vendedores nuevos que salen a levantar los telefónicos (escenarios < 10)
+  const RECUPERO = new URLSearchParams(location.search).get('modo') === 'recupero';
   const $ = s => document.querySelector(s);
+  if (RECUPERO) { $('#ck-tel700').checked = $('#ck-telD').checked = true; $('#ck-cli').checked = false; document.title = 'MAS Zonas · Recupero'; }
   const num = x => Math.round(x).toLocaleString('es-AR');
 
   let sb = null, usuario = null;
@@ -20,7 +23,10 @@
   // telefónicos que se pasan a visita para recuperarlos (valen para todos los escenarios)
   const recup = new Set(); let recGuardado = new Set(), sinTablaRec = false;
   const esTel = c => c.estado.startsWith('Telefónico');
-  const enRuta = c => c.estado === 'Visita' || recup.has(c.codigo);
+  // los clientes que cuentan en las zonas: de visita (más los recuperados) o, en el modo recupero, los telefónicos tildados
+  const enRuta = c => RECUPERO
+    ? (c.estado === 'Telefónico (camión 700)' ? $('#ck-tel700').checked : c.estado === 'Telefónico' && $('#ck-telD').checked)
+    : c.estado === 'Visita' || recup.has(c.codigo);
   let rutaCapa = null, rutaActual = null;
 
   // ---------- Carga ----------
@@ -75,15 +81,18 @@
       if (LOCAL) {
         clientes = await (await fetch('datos/local/clientes.json')).json();
         window._localAsig = await (await fetch('datos/local/asignacion.json')).json();
-        escenarios = Object.keys(window._localAsig).map(Number).sort((a, b) => b - a);
+        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => b - a);
       } else {
         clientes = await traerTodo('zonas_clientes', 'codigo,cliente,vendedor,segmento,fact_mes,estado,lat,lng,manzana');
-        try { for (const r of await traerTodo('zonas_recuperar', 'codigo')) recup.add(r.codigo); }
-        catch (e) { sinTablaRec = true; }
+        if (!RECUPERO) {
+          try { for (const r of await traerTodo('zonas_recuperar', 'codigo')) recup.add(r.codigo); }
+          catch (e) { sinTablaRec = true; }
+        }
         recGuardado = new Set(recup);
         const { data, error } = await sb.from('zonas_asignacion').select('escenario').eq('manzana', 0);
         if (error) throw error;
-        escenarios = data.map(r => r.escenario).sort((a, b) => b - a);
+        escenarios = data.map(r => r.escenario).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => b - a);
+        if (!escenarios.length) throw new Error(RECUPERO ? 'todavía no están cargadas las zonas de recupero' : 'no hay escenarios');
       }
       esc = escenarios[0];
       await cargarAsignacion(esc);
@@ -106,7 +115,8 @@
     for (const c of clientes) {
       c.wx = mx(c.lng); c.wy = my(c.lat);
       porManzana[c.manzana].push(c);
-      if (c.estado === 'Visita') peso[c.manzana]++; else if (c.estado.startsWith('Telefónico')) telPorManzana[c.manzana]++;
+      if (RECUPERO ? esTel(c) : c.estado === 'Visita') peso[c.manzana]++;
+      if (c.estado.startsWith('Telefónico')) telPorManzana[c.manzana]++;
     }
     // geometría en coordenadas de mundo (zoom 0) + caja de cada manzana
     const segMap = new Map();
@@ -185,7 +195,7 @@
       dibujar() { dibujar(this.cv); },
     });
     capa = new Capa().addTo(map);
-    const pts = clientes.filter(c => c.estado === 'Visita');
+    const pts = clientes.filter(enRuta);
     map.fitBounds(L.latLngBounds(pts.map(c => [c.lat, c.lng])), { padding: [20, 20] });
     eventosPincel();
   }
@@ -243,12 +253,13 @@
     for (const c of clientes) {
       if (c.wx < vx0 || c.wx > vx1 || c.wy < vy0 || c.wy > vy1) continue;
       const t700 = c.estado === 'Telefónico (camión 700)', tD = c.estado === 'Telefónico';
-      const rec = recup.has(c.codigo), vis = c.estado === 'Visita' || rec;
-      if (vis ? !verCli : !((ver700 && t700) || (verD && tD))) continue;
+      // en el modo recupero los telefónicos son los que cuentan y los de visita quedan de fondo en gris
+      const rec = RECUPERO ? enRuta(c) : recup.has(c.codigo), vis = RECUPERO ? rec : c.estado === 'Visita' || rec;
+      if (RECUPERO ? !(vis || (verCli && c.estado === 'Visita')) : vis ? !verCli : !((ver700 && t700) || (verD && tD))) continue;
       if (vis && vista !== 'dias' && !grupo(c.manzana) && !otras) continue;
       ctx.beginPath(); ctx.arc(c.wx, c.wy, rec ? r * 1.25 : r, 0, Math.PI * 2);
-      ctx.fillStyle = vis ? (colorGrupo(grupo(c.manzana)) || '#6b7280') : t700 ? '#111' : '#7c3aed';
-      // los recuperados llevan el borde del color de su tipo de telefónico
+      ctx.fillStyle = vis ? (colorGrupo(grupo(c.manzana)) || '#6b7280') : c.estado === 'Visita' ? '#9aa3b5' : t700 ? '#111' : '#7c3aed';
+      // los telefónicos que cuentan llevan el borde del color de su tipo (negro 700, violeta otros)
       ctx.fill(); ctx.lineWidth = rec ? r * 0.8 : r * 0.45; ctx.strokeStyle = rec ? (t700 ? '#111' : '#7c3aed') : '#fff'; ctx.stroke();
     }
     // etiquetas
@@ -402,6 +413,11 @@
 
   // ---------- Controles ----------
   function armarControles() {
+    // lo que es solo de un modo
+    document.querySelectorAll('[data-solo]').forEach(el => { el.hidden = el.dataset.solo !== (RECUPERO ? 'recupero' : 'visita'); });
+    const ir = $('#ir-modo'), q = new URLSearchParams(location.search);
+    RECUPERO ? q.delete('modo') : q.set('modo', 'recupero'); ['vista', 'dia', 'zona'].forEach(k => q.delete(k));
+    ir.href = '?' + q.toString(); ir.textContent = RECUPERO ? 'Ir a zonas de visita' : 'Ir a recupero de telefónicos';
     const eb = $('#esc-btns');
     for (const e of escenarios) {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = `${e} vendedores`; b.dataset.esc = e;
@@ -416,7 +432,8 @@
     }));
     $('#sel-dia').addEventListener('change', e => { diaSel = Number(e.target.value); $('#ruta-dia').value = diaSel + 1; destino = null; refrescar(); });
     $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); $('#ruta-zona').value = zonaSel; destino = null; refrescar(); encuadrarZona(); });
-    ['#ck-cli', '#ck-tel700', '#ck-telD', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
+    ['#ck-cli', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
+    ['#ck-tel700', '#ck-telD'].forEach(s => $(s).addEventListener('change', () => RECUPERO ? refrescar() : capa.dibujar()));
     $('#btn-deshacer').addEventListener('click', deshacer);
     $('#btn-guardar').addEventListener('click', guardar);
     $('#btn-kml').addEventListener('click', exportarKML);
@@ -475,7 +492,7 @@
     const { c, f, tot } = conteos();
     const box = $('#destinos'); box.textContent = '';
     let items = [];
-    if (vista === 'dias') { $('#destino-tit').textContent = 'Días (clientes de visita)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
+    if (vista === 'dias') { $('#destino-tit').textContent = RECUPERO ? 'Días (telefónicos)' : 'Días (clientes de visita)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: `Zona ${z}`, extra: `${num(tot.get(z) || 0)} en la semana` }); }
     else { $('#destino-tit').textContent = `Días de la zona ${zonaSel} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     const vals = items.map(it => c.get(it.g) || 0), prom = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
@@ -503,6 +520,7 @@
   const contarPendientes = () => { const p = pendRec(); return Object.values(pendientes).reduce((a, m) => a + m.size, 0) + p.altas.length + p.bajas.length; };
 
   function resumenRecuperar() {
+    if (RECUPERO) return;
     const A = asig[esc]; let n7 = 0, nD = 0, f = 0, enZona = 0;
     for (const c of clientes) {
       if (!recup.has(c.codigo)) continue;
@@ -607,14 +625,14 @@
         + rings.map(r => `<Polygon><outerBoundaryIs><LinearRing><coordinates>${r.map(p => p[0] + ',' + p[1]).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon>`).join('')
         + '</MultiGeometry></Placemark>\n';
     }
-    descargar(`zonas_${esc}_vendedores.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${esc} vendedores</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
+    descargar(`zonas_${RECUPERO ? 'recupero_' : ''}${esc}_vendedores.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${esc} vendedores</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
   }
   function exportarCSV() {
     const A = asig[esc];
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
-    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', 'en_ruta', 'fact_mes', 'zona', 'dia']];
+    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', RECUPERO ? 'cuenta_en_recupero' : 'en_ruta', 'fact_mes', 'zona', 'dia']];
     for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, recup.has(c.codigo) ? 'si' : 'no', enRuta(c) ? 'si' : 'no', Math.round(c.fact_mes), A.zona[c.manzana], DIAS[A.dia[c.manzana] - 1]]);
-    descargar(`clientes_zonas_${esc}_vendedores.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+    descargar(`clientes_zonas_${RECUPERO ? 'recupero_' : ''}${esc}_vendedores.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   // ---------- Ruta de una zona en un día ----------

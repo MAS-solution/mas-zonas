@@ -206,4 +206,21 @@ for N in ESC:
     por_dia = [[cd[(z, d)] for z in range(N)] for d in range(5)]
     print(N, 'zonas', min(cz.values()), max(cz.values()), 'por día (mín-máx dentro de cada día)', [f'{min(x)}-{max(x)}' for x in por_dia])
     res[N] = [[int(zona[i]) + 1, int(dia[i]) + 1] for i in range(n)]
+
+# Recupero: zonas para 4 vendedores nuevos que salen a levantar los telefónicos (700 y otros), con los
+# mismos días por sector que los clientes con venta. Se guarda como escenario 4.
+REC = 4
+peso = np.zeros(n, int)
+tel = [r for r in cli if r['estado'].startswith('Telefónico')]
+for r in tel: peso[cm[r['codigo']]] += 1
+dia = dia0
+zona = emparejar([zonas_del_dia(d, REC) for d in range(5)], REC)
+zona, dia, mov = limpiar_islas(zona, dia0, max_chica=3, max_lejos=10)
+zona = emparejar([zona] * 5, REC)
+igual = sum(1 for r in tel if DIA_G.get(r['codigo']) == dia[cm[r['codigo']]])
+cz = collections.Counter(); cd = collections.Counter()
+for i in range(n): cz[zona[i]] += peso[i]; cd[(zona[i], dia[i])] += peso[i]
+print('recupero', len(tel), 'telefónicos ·', REC, 'zonas', sorted(cz.values()), '· por día', [[cd[(z, d)] for d in range(5)] for z in range(REC)],
+      f'· coinciden con su día del maestro {100 * igual / len(tel):.0f}%')
+res[REC] = [[int(zona[i]) + 1, int(dia[i]) + 1] for i in range(n)]
 json.dump(res, open('asignacion.json', 'w'), separators=(',', ':'))
