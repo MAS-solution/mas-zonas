@@ -53,3 +53,30 @@ begin
 end $$;
 revoke all on function public.zonas_guardar(integer, jsonb) from public, anon;
 grant execute on function public.zonas_guardar(integer, jsonb) to authenticated;
+
+-- Telefónicos que se pasan a visita para recuperarlos (valen para todos los escenarios:
+-- entran en la zona y el día de su manzana)
+create table if not exists public.zonas_recuperar (
+  codigo      text primary key references public.zonas_clientes(codigo) on delete cascade,
+  editado_por uuid references auth.users(id),
+  editado_en  timestamptz not null default now()
+);
+alter table public.zonas_recuperar enable row level security;
+drop policy if exists zonas_recuperar_ver on public.zonas_recuperar;
+create policy zonas_recuperar_ver on public.zonas_recuperar for select to authenticated using (public.zonas_es_admin());
+
+create or replace function public.zonas_recuperar_guardar(p_altas text[], p_bajas text[]) returns integer
+  language plpgsql security definer set search_path = public as $$
+declare n integer := 0; m integer;
+begin
+  if not public.zonas_es_admin() then raise exception 'sin permiso'; end if;
+  insert into public.zonas_recuperar (codigo, editado_por)
+    select c, auth.uid() from unnest(coalesce(p_altas, '{}')) c
+    on conflict (codigo) do update set editado_por = excluded.editado_por, editado_en = now();
+  get diagnostics n = row_count;
+  delete from public.zonas_recuperar where codigo = any(coalesce(p_bajas, '{}'));
+  get diagnostics m = row_count;
+  return n + m;
+end $$;
+revoke all on function public.zonas_recuperar_guardar(text[], text[]) from public, anon;
+grant execute on function public.zonas_recuperar_guardar(text[], text[]) to authenticated;

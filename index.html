@@ -51,6 +51,7 @@
           <button type="button" data-tool="mover" aria-pressed="true">Mover mapa</button>
           <button type="button" data-tool="pincel" aria-pressed="false">Pincel</button>
           <button type="button" data-tool="lazo" aria-pressed="false">Lazo</button>
+          <button type="button" data-tool="recuperar" aria-pressed="false">Recuperar</button>
         </div>
         <p class="ayuda" id="ayuda-tool">Arrastrá para moverte. Tocá una manzana para ver su zona y día.</p>
       </div>
@@ -65,6 +66,26 @@
         <button id="btn-guardar" class="btn primary" type="button" disabled>Guardar</button>
       </div>
       <p id="estado" class="estado"></p>
+
+      <div class="campo">
+        <span class="etq">Recuperar telefónicos</span>
+        <p class="ayuda" id="rec-resumen"></p>
+        <p class="ayuda">Con la herramienta Recuperar pasás telefónicos a visita: suman en la zona y el día de su manzana, y se ven con borde negro (700) o violeta (otros).</p>
+      </div>
+
+      <div class="campo">
+        <span class="etq">Ruta</span>
+        <div class="acciones">
+          <select id="ruta-zona" aria-label="Zona de la ruta"></select>
+          <select id="ruta-dia" aria-label="Día de la ruta"></select>
+        </div>
+        <div class="acciones">
+          <button id="btn-ruta" class="btn primary" type="button">Armar ruta</button>
+          <button id="btn-ruta-csv" class="btn" type="button" disabled>CSV</button>
+          <button id="btn-ruta-quitar" class="btn ghost" type="button" disabled>Quitar</button>
+        </div>
+        <p class="ayuda" id="ruta-info"></p>
+      </div>
 
       <div class="campo">
         <span class="etq">Mostrar</span>

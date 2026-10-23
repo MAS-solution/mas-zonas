@@ -17,6 +17,11 @@
   const historial = [];       // [{esc, cambios: [[m, zonaAntes, diaAntes, zonaDesp, diaDesp]]}]
   let vista = 'dias', diaSel = 0, zonaSel = 1, destino = null, herramienta = 'mover';
   let map, capa, segs, bordesCache = null;
+  // telefónicos que se pasan a visita para recuperarlos (valen para todos los escenarios)
+  const recup = new Set(); let recGuardado = new Set(), sinTablaRec = false;
+  const esTel = c => c.estado.startsWith('Telefónico');
+  const enRuta = c => c.estado === 'Visita' || recup.has(c.codigo);
+  let rutaCapa = null, rutaActual = null;
 
   // ---------- Carga ----------
   async function iniciar() {
@@ -73,6 +78,9 @@
         escenarios = Object.keys(window._localAsig).map(Number).sort((a, b) => b - a);
       } else {
         clientes = await traerTodo('zonas_clientes', 'codigo,cliente,vendedor,segmento,fact_mes,estado,lat,lng,manzana');
+        try { for (const r of await traerTodo('zonas_recuperar', 'codigo')) recup.add(r.codigo); }
+        catch (e) { sinTablaRec = true; }
+        recGuardado = new Set(recup);
         const { data, error } = await sb.from('zonas_asignacion').select('escenario').eq('manzana', 0);
         if (error) throw error;
         escenarios = data.map(r => r.escenario).sort((a, b) => b - a);
@@ -234,13 +242,14 @@
     const r = Math.max(1.6, Math.min(4.5, (map.getZoom() - 10) * 0.9)) / k;
     for (const c of clientes) {
       if (c.wx < vx0 || c.wx > vx1 || c.wy < vy0 || c.wy > vy1) continue;
-      const vis = c.estado === 'Visita';
       const t700 = c.estado === 'Telefónico (camión 700)', tD = c.estado === 'Telefónico';
+      const rec = recup.has(c.codigo), vis = c.estado === 'Visita' || rec;
       if (vis ? !verCli : !((ver700 && t700) || (verD && tD))) continue;
       if (vis && vista !== 'dias' && !grupo(c.manzana) && !otras) continue;
-      ctx.beginPath(); ctx.arc(c.wx, c.wy, r, 0, Math.PI * 2);
+      ctx.beginPath(); ctx.arc(c.wx, c.wy, rec ? r * 1.25 : r, 0, Math.PI * 2);
       ctx.fillStyle = vis ? (colorGrupo(grupo(c.manzana)) || '#6b7280') : t700 ? '#111' : '#7c3aed';
-      ctx.fill(); ctx.lineWidth = r * 0.45; ctx.strokeStyle = '#fff'; ctx.stroke();
+      // los recuperados llevan el borde del color de su tipo de telefónico
+      ctx.fill(); ctx.lineWidth = rec ? r * 0.8 : r * 0.45; ctx.strokeStyle = rec ? (t700 ? '#111' : '#7c3aed') : '#fff'; ctx.stroke();
     }
     // etiquetas
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -259,7 +268,7 @@
   function etiquetas() {
     const A = asig[esc], acc = new Map();
     for (const c of clientes) {
-      if (c.estado !== 'Visita') continue;
+      if (!enRuta(c)) continue;
       const id = c.manzana, z = A.zona[id], d = A.dia[id];
       const key = vista === 'dias' ? z + '-' + d : vista === 'zonasDia' ? (d === diaSel + 1 ? 'z' + z : null) : (z === zonaSel ? 'd' + d : null);
       if (!key) continue;
@@ -308,6 +317,7 @@
     const mundo = e => { const p = map.mouseEventToContainerPoint(e); const { k, ox, oy } = transformacion(); return [(p.x - ox) / k, (p.y - oy) / k]; };
     cont.addEventListener('pointerdown', e => {
       if (herramienta === 'mover' || e.button !== 0 || e.target.closest('.leaflet-control')) return;
+      if (herramienta === 'recuperar') { e.preventDefault(); cont.setPointerCapture(e.pointerId); lazo = [mundo(e)]; return; }
       if (destino == null) { estado('Elegí primero con qué pintar.'); return; }
       e.preventDefault(); cont.setPointerCapture(e.pointerId);
       if (herramienta === 'pincel') { trazo = []; aplicar(manzanaEn(...mundo(e))); capa.dibujar(); }
@@ -319,6 +329,7 @@
     });
     const fin = e => {
       if (trazo && herramienta === 'pincel') cerrarTrazo();
+      if (lazo && herramienta === 'recuperar') { recuperarEn(lazo); lazo = null; quitarLazo(); return; }
       if (lazo) {
         trazo = [];
         if (lazo.length > 2) {
@@ -340,6 +351,33 @@
       mostrarInfo(id, e.latlng);
     });
   }
+  // Recuperar: un toque pasa (o saca) el telefónico más cercano; un contorno pasa todos los visibles de adentro
+  function recuperarEn(lazo) {
+    const { k } = transformacion();
+    const visible = c => esTel(c) && (recup.has(c.codigo) || (c.estado === 'Telefónico' ? $('#ck-telD').checked : $('#ck-tel700').checked));
+    const cambios = [];
+    const xs = lazo.map(p => p[0]), ys = lazo.map(p => p[1]);
+    const ancho = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * k;
+    if (lazo.length <= 3 || ancho < 8) {
+      const [x, y] = lazo[0]; let mejor = null, dm = (12 / k) ** 2;
+      for (const c of clientes) {
+        if (!visible(c)) continue;
+        const d = (c.wx - x) ** 2 + (c.wy - y) ** 2; if (d < dm) { dm = d; mejor = c; }
+      }
+      if (mejor) cambios.push([mejor.codigo, recup.has(mejor.codigo), !recup.has(mejor.codigo)]);
+      else estado('Tocá un punto de telefónico (negro o violeta).');
+    } else {
+      for (const c of clientes) if (visible(c) && !recup.has(c.codigo) && dentroDe(lazo, c.wx, c.wy)) cambios.push([c.codigo, false, true]);
+    }
+    if (!cambios.length) { refrescar(); return; }
+    for (const [cod, , desp] of cambios) desp ? recup.add(cod) : recup.delete(cod);
+    historial.push({ rec: cambios }); refrescar();
+  }
+  const pendRec = () => ({
+    altas: [...recup].filter(c => !recGuardado.has(c)),
+    bajas: [...recGuardado].filter(c => !recup.has(c)),
+  });
+
   let lazoLinea = null;
   function dibujarLazo(l) {
     const ll = l.map(([x, y]) => map.unproject([x, y], 0));
@@ -357,7 +395,7 @@
     const add = (t, b) => { const el = document.createElement(b ? 'b' : 'div'); el.textContent = t; box.appendChild(el); };
     add(`Zona ${A.zona[id]} · ${DIAS[A.dia[id] - 1]}`, true);
     add(`${peso[id]} clientes de visita${telPorManzana[id] ? ` · ${telPorManzana[id]} telefónicos` : ''}`);
-    for (const c of cs.slice(0, 8)) add(`#${c.codigo} ${c.cliente} · V${c.vendedor}${c.estado === 'Visita' ? '' : ' · ' + c.estado.toLowerCase()}`);
+    for (const c of cs.slice(0, 8)) add(`#${c.codigo} ${c.cliente} · V${c.vendedor}${c.estado === 'Visita' ? '' : ' · ' + c.estado.toLowerCase()}${recup.has(c.codigo) ? ' · a recuperar' : ''}`);
     if (cs.length > 8) add(`y ${cs.length - 8} más`);
     box.hidden = false;
   }
@@ -371,14 +409,22 @@
       eb.appendChild(b);
     }
     document.querySelectorAll('[data-vista]').forEach(b => b.addEventListener('click', () => { vista = b.dataset.vista; destino = null; refrescar(); if (vista === 'zona') encuadrarZona(); }));
-    document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => { herramienta = b.dataset.tool; refrescar(); }));
-    $('#sel-dia').addEventListener('change', e => { diaSel = Number(e.target.value); destino = null; refrescar(); });
-    $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); destino = null; refrescar(); encuadrarZona(); });
+    document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => {
+      herramienta = b.dataset.tool;
+      if (herramienta === 'recuperar' && !$('#ck-tel700').checked && !$('#ck-telD').checked) $('#ck-tel700').checked = $('#ck-telD').checked = true;
+      refrescar();
+    }));
+    $('#sel-dia').addEventListener('change', e => { diaSel = Number(e.target.value); $('#ruta-dia').value = diaSel + 1; destino = null; refrescar(); });
+    $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); $('#ruta-zona').value = zonaSel; destino = null; refrescar(); encuadrarZona(); });
     ['#ck-cli', '#ck-tel700', '#ck-telD', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
     $('#btn-deshacer').addEventListener('click', deshacer);
     $('#btn-guardar').addEventListener('click', guardar);
     $('#btn-kml').addEventListener('click', exportarKML);
     $('#btn-csv').addEventListener('click', exportarCSV);
+    $('#btn-ruta').addEventListener('click', armarRuta);
+    $('#btn-ruta-csv').addEventListener('click', exportarRuta);
+    $('#btn-ruta-quitar').addEventListener('click', quitarRuta);
+    const rd = $('#ruta-dia'); DIAS.forEach((d, i) => rd.appendChild(new Option(d, i + 1)));
     $('#buscar').addEventListener('input', buscar);
     document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); deshacer(); } });
     window.addEventListener('beforeunload', e => { if (contarPendientes()) { e.preventDefault(); e.returnValue = ''; } });
@@ -388,7 +434,7 @@
   // acerca el mapa a los clientes de la zona elegida
   function encuadrarZona() {
     const A = asig[esc];
-    const pts = clientes.filter(c => c.estado === 'Visita' && A.zona[c.manzana] === zonaSel).map(c => [c.lat, c.lng]);
+    const pts = clientes.filter(c => enRuta(c) && A.zona[c.manzana] === zonaSel).map(c => [c.lat, c.lng]);
     if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
   }
   function armarSelects() {
@@ -396,12 +442,15 @@
     for (let z = 1; z <= nZonas(); z++) sz.appendChild(new Option('Zona ' + z, z));
     if (zonaSel > nZonas()) zonaSel = 1;
     sz.value = zonaSel;
+    const rz = $('#ruta-zona'), ant = Number(rz.value) || zonaSel; rz.textContent = '';
+    for (let z = 1; z <= nZonas(); z++) rz.appendChild(new Option('Zona ' + z, z));
+    rz.value = ant <= nZonas() ? ant : 1;
   }
 
   function conteos() {
     const A = asig[esc], c = new Map(), f = new Map(), tot = new Map();
     for (const cl of clientes) {
-      if (cl.estado !== 'Visita') continue;
+      if (!enRuta(cl)) continue;
       const id = cl.manzana, g = grupo(id);
       tot.set(A.zona[id], (tot.get(A.zona[id]) || 0) + 1);
       if (!g) continue;
@@ -420,7 +469,8 @@
     $('#mapa').classList.toggle('pincel', herramienta !== 'mover');
     $('#ayuda-tool').textContent = herramienta === 'mover' ? 'Arrastrá para moverte. Tocá una manzana para ver su zona, día y clientes.'
       : herramienta === 'pincel' ? 'Arrastrá sobre las manzanas para pasarlas a lo elegido abajo. Ctrl+Z deshace.'
-        : 'Dibujá un contorno: todas las manzanas de adentro pasan a lo elegido abajo.';
+        : herramienta === 'recuperar' ? 'Tocá un telefónico para pasarlo a visita (o sacarlo), o dibujá un contorno para pasar todos los de adentro. Entran en la zona y el día de su manzana.'
+          : 'Dibujá un contorno: todas las manzanas de adentro pasan a lo elegido abajo.';
     // destinos con conteos
     const { c, f, tot } = conteos();
     const box = $('#destinos'); box.textContent = '';
@@ -442,6 +492,7 @@
       d.addEventListener('click', () => { destino = destino === it.g ? null : it.g; if (destino != null && herramienta === 'mover') herramienta = 'pincel'; refrescar(); });
       box.appendChild(d);
     }
+    resumenRecuperar();
     const np = contarPendientes();
     $('#btn-guardar').disabled = !np || LOCAL;
     $('#btn-guardar').textContent = np ? `Guardar (${np})` : 'Guardar';
@@ -449,12 +500,27 @@
     if (LOCAL && np) estado('Modo local: los cambios no se guardan.');
     capa && capa.dibujar();
   }
-  const contarPendientes = () => Object.values(pendientes).reduce((a, m) => a + m.size, 0);
+  const contarPendientes = () => { const p = pendRec(); return Object.values(pendientes).reduce((a, m) => a + m.size, 0) + p.altas.length + p.bajas.length; };
+
+  function resumenRecuperar() {
+    const A = asig[esc]; let n7 = 0, nD = 0, f = 0, enZona = 0;
+    for (const c of clientes) {
+      if (!recup.has(c.codigo)) continue;
+      if (c.estado === 'Telefónico') { nD++; f += c.fact_mes || 0; } else n7++;
+      if (A.zona[c.manzana] === zonaSel) enZona++;
+    }
+    let t = !(n7 + nD) ? 'Todavía no hay telefónicos pasados a visita.'
+      : `${num(n7 + nD)} a recuperar: ${num(n7)} del 700 y ${num(nD)} otros ($ ${num(f / 1000)} mil por mes de los otros).`
+        + (vista === 'zona' ? ` En la zona ${zonaSel}: ${num(enZona)}.` : '');
+    if (sinTablaRec) t += ' Falta crear la tabla en la base: por ahora no se puede guardar.';
+    $('#rec-resumen').textContent = t;
+  }
   const estado = t => { $('#estado').textContent = t; };
 
   function deshacer() {
     const h = historial.pop(); if (!h) return;
     const A = asig[h.esc];
+    if (h.rec) { for (const [cod, antes] of h.rec) antes ? recup.add(cod) : recup.delete(cod); refrescar(); return; }
     for (let i = h.cambios.length - 1; i >= 0; i--) {
       const [id, z0, d0] = h.cambios[i];
       A.zona[id] = z0; A.dia[id] = d0;
@@ -473,6 +539,13 @@
           if (error) throw error;
         }
         m.clear();
+      }
+      const { altas, bajas } = pendRec();
+      if (altas.length || bajas.length) {
+        if (sinTablaRec) throw new Error('falta crear la tabla de recuperados en la base');
+        const { error } = await sb.rpc('zonas_recuperar_guardar', { p_altas: altas, p_bajas: bajas });
+        if (error) throw error;
+        recGuardado = new Set(recup);
       }
       estado('Guardado ' + new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) + '.');
     } catch (e) { estado('No se pudo guardar: ' + (e.message || e)); }
@@ -539,9 +612,67 @@
   function exportarCSV() {
     const A = asig[esc];
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
-    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'fact_mes', 'zona', 'dia']];
-    for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, Math.round(c.fact_mes), A.zona[c.manzana], DIAS[A.dia[c.manzana] - 1]]);
+    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', 'en_ruta', 'fact_mes', 'zona', 'dia']];
+    for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, recup.has(c.codigo) ? 'si' : 'no', enRuta(c) ? 'si' : 'no', Math.round(c.fact_mes), A.zona[c.manzana], DIAS[A.dia[c.manzana] - 1]]);
     descargar(`clientes_zonas_${esc}_vendedores.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+  }
+
+  // ---------- Ruta de una zona en un día ----------
+  // Orden de visita: arranca en el cliente más alejado del centro de la zona, va siempre al más cercano y
+  // después destraba cruces (2-opt). Los km son en línea recta × 1,3 para aproximar el recorrido por calles.
+  const km = (a, b) => Math.hypot((a.lat - b.lat) * 110.5, (a.lng - b.lng) * 95.0);
+  function ordenar(pts) {
+    if (pts.length < 3) return pts.slice();
+    const centro = { lat: pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng: pts.reduce((s, p) => s + p.lng, 0) / pts.length };
+    let ini = 0, dmax = -1;
+    pts.forEach((p, i) => { const d = km(p, centro); if (d > dmax) { dmax = d; ini = i; } });
+    const libre = new Set(pts.keys()); libre.delete(ini); const o = [pts[ini]];
+    while (libre.size) {
+      const u = o[o.length - 1]; let mj = -1, dm = Infinity;
+      for (const i of libre) { const d = km(u, pts[i]); if (d < dm) { dm = d; mj = i; } }
+      o.push(pts[mj]); libre.delete(mj);
+    }
+    for (let mejora = true, vueltas = 0; mejora && vueltas < 50; vueltas++) {
+      mejora = false;
+      for (let i = 0; i < o.length - 2; i++) for (let j = i + 2; j < o.length; j++) {
+        const a = o[i], b = o[i + 1], c = o[j], d = o[j + 1];
+        const antes = km(a, b) + (d ? km(c, d) : 0), desp = km(a, c) + (d ? km(b, d) : 0);
+        if (desp < antes - 1e-9) { o.splice(i + 1, j - i, ...o.slice(i + 1, j + 1).reverse()); mejora = true; }
+      }
+    }
+    return o;
+  }
+  function armarRuta() {
+    const A = asig[esc], z = Number($('#ruta-zona').value), d = Number($('#ruta-dia').value);
+    const pts = clientes.filter(c => enRuta(c) && A.zona[c.manzana] === z && A.dia[c.manzana] === d);
+    quitarRuta();
+    if (!pts.length) { $('#ruta-info').textContent = 'Esa zona no tiene clientes ese día.'; return; }
+    const o = ordenar(pts);
+    let tot = 0; for (let i = 1; i < o.length; i++) tot += km(o[i - 1], o[i]);
+    rutaActual = { z, d, o };
+    rutaCapa = L.layerGroup().addTo(map);
+    L.polyline(o.map(c => [c.lat, c.lng]), { color: '#14213d', weight: 3, opacity: .8, interactive: false }).addTo(rutaCapa);
+    o.forEach((c, i) => L.marker([c.lat, c.lng], {
+      icon: L.divIcon({ className: 'nro' + (recup.has(c.codigo) ? ' rec' : ''), html: String(i + 1), iconSize: [20, 20] }),
+      title: `${i + 1}. #${c.codigo} ${c.cliente}${recup.has(c.codigo) ? ' (a recuperar)' : ''}`,
+    }).addTo(rutaCapa));
+    map.fitBounds(L.latLngBounds(o.map(c => [c.lat, c.lng])), { padding: [40, 40] });
+    const nr = o.filter(c => recup.has(c.codigo)).length;
+    $('#ruta-info').textContent = `Zona ${z} · ${DIAS[d - 1]}: ${o.length} clientes${nr ? ` (${nr} a recuperar)` : ''}, unos ${(tot * 1.3).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km del primero al último.`;
+    $('#btn-ruta-csv').disabled = $('#btn-ruta-quitar').disabled = false;
+  }
+  function quitarRuta() {
+    if (rutaCapa) { rutaCapa.remove(); rutaCapa = null; }
+    rutaActual = null; $('#ruta-info').textContent = '';
+    $('#btn-ruta-csv').disabled = $('#btn-ruta-quitar').disabled = true;
+  }
+  function exportarRuta() {
+    if (!rutaActual) return;
+    const { z, d, o } = rutaActual;
+    const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
+    const filas = [['orden', 'codigo', 'cliente', 'vendedor_actual', 'estado', 'a_recuperar', 'lat', 'lng', 'mapa']];
+    o.forEach((c, i) => filas.push([i + 1, c.codigo, c.cliente, c.vendedor, c.estado, recup.has(c.codigo) ? 'si' : 'no', c.lat, c.lng, `https://www.google.com/maps?q=${c.lat},${c.lng}`]));
+    descargar(`ruta_zona${z}_${DIAS[d - 1].toLowerCase()}_${esc}_vendedores.csv`, '\ufeff' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   iniciar();
