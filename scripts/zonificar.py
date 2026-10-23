@@ -5,6 +5,7 @@
 # cantidad de clientes de cada día, así cada vendedor tiene ~1/5 de su zona por día.
 import json, csv, math, collections
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']
 man = json.load(open('manzanas.json'))
@@ -89,37 +90,65 @@ igual = sum(1 for r in visita if DIA_G.get(r['codigo']) == dia[cm[r['codigo']]])
 print('clientes que mantienen su día', igual, 'de', len(visita), f'({100 * igual / len(visita):.0f}%)')
 CENTRO = np.average(cxy, axis=0, weights=peso + 1e-9)
 
+def cortes_rectos(idx, k, tol_rel=0.02):
+    """Parte las manzanas idx en k partes con cortes rectos norte-sur o este-oeste (la cuadrícula de
+    Córdoba va así), repartiendo los clientes en proporción. Cada corte cae en el hueco más ancho
+    entre manzanas dentro de un margen del 2% de clientes: o sea, sobre una calle, sin escalones."""
+    if k == 1: return [idx]
+    w = peso[idx].astype(float); P = cxy[idx]
+    con = w > 0
+    eje = int(np.argmax([np.sqrt(np.cov(P[con, e], aweights=w[con])) for e in (0, 1)]))
+    o = np.argsort(P[:, eje]); xs = P[o, eje]; acum = np.cumsum(w[o]); tot = acum[-1]
+    k1 = k // 2; meta = tot * k1 / k; tol = max(3.0, tot * tol_rel)
+    cand = [i for i in range(len(o) - 1) if abs(acum[i] - meta) <= tol and xs[i + 1] > xs[i]]
+    if not cand: cand = [int(np.argmin(np.abs(acum[:-1] - meta)))]
+    # el hueco más ancho, desempatando por cercanía a la meta
+    i = max(cand, key=lambda i: (round((xs[i + 1] - xs[i]) * 1000, 0), -abs(acum[i] - meta)))
+    return cortes_rectos(idx[o[:i + 1]], k1, tol_rel) + cortes_rectos(idx[o[i + 1:]], k - k1, tol_rel)
+
 def zonas_del_dia(d, N):
-    """Parte las manzanas del día d en N subzonas compactas y parejas (cortes rectos y después ajuste por calles)."""
-    global selset
+    """Parte las manzanas del día d en N subzonas con cortes rectos."""
     idx = np.where(dia == d)[0]
-    con = idx[peso[idx] > 0]
+    partes = cortes_rectos(idx, N)
     lab = np.full(n, -1)
-    for k, parte in enumerate(biseccion(con, N, peso)): lab[parte] = k
-    dentro = np.zeros(n, bool); dentro[idx] = True
-    lab = rellenar(lab, dentro)
-    selset = set(idx.tolist())
-    lab = equilibrar(lab, N, con.tolist(), tol=2)
-    l2 = lab.copy(); l2[idx[peso[idx] == 0]] = -1
-    l2 = rellenar(l2, dentro)
-    # numerar por ángulo alrededor del centro, así la zona k de cada día cae para el mismo lado
-    ang = []
-    for k in range(N):
-        ii = idx[(l2[idx] == k) & (peso[idx] > 0)]
-        c = np.average(cxy[ii], axis=0, weights=peso[ii]) - CENTRO
-        ang.append(np.arctan2(c[1], c[0]))
-    orden = {k: r for r, k in enumerate(np.argsort(ang))}
-    out = np.full(n, -1)
-    out[idx] = [orden[k] for k in l2[idx]]
-    return out
+    for k, parte in enumerate(partes): lab[parte] = k
+    return lab
+
+def emparejar(piezas, N):
+    """Qué pedazo de cada día va con cada zona: el lunes se numera por ángulo alrededor del centro y
+    los otros días se asignan (asignación óptima) buscando que los totales de la semana queden parejos
+    y que cada zona caiga más o menos para el mismo lado de la ciudad."""
+    info = []
+    for d in range(5):
+        lab = piezas[d]; idx = np.where(dia == d)[0]; fila = []
+        for k in range(N):
+            ii = idx[(lab[idx] == k) & (peso[idx] > 0)]
+            c = np.average(cxy[ii], axis=0, weights=peso[ii]) - CENTRO
+            fila.append((np.arctan2(c[1], c[0]), peso[ii].sum()))
+        info.append(fila)
+    orden0 = np.argsort([a for a, _ in info[0]])
+    mapa = [dict() for _ in range(5)]
+    tot = np.zeros(N); ang = np.zeros(N)
+    for z, k in enumerate(orden0): mapa[0][k] = z; tot[z] = info[0][k][1]; ang[z] = info[0][k][0]
+    for d in sorted(range(1, 5), key=lambda d: -np.ptp([w for _, w in info[d]])):
+        sz = np.array([w for _, w in info[d]]); an = np.array([a for a, _ in info[d]])
+        meta = tot.mean() + sz.mean()
+        da = np.abs((an[:, None] - ang[None, :] + np.pi) % (2 * np.pi) - np.pi)
+        cost = (tot[None, :] + sz[:, None] - meta) ** 2 + 8.0 * da
+        r_, c_ = linear_sum_assignment(cost)
+        for k, z in zip(r_, c_): mapa[d][k] = z; tot[z] += sz[k]
+    zona = np.full(n, -1)
+    for d in range(5):
+        idx = np.where(dia == d)[0]
+        zona[idx] = [mapa[d][k] for k in piezas[d][idx]]
+    return zona
 
 res = {}
 for N in ESC:
-    zona = np.full(n, -1)
-    for d in range(5):
-        zd = zonas_del_dia(d, N); m = zd >= 0; zona[m] = zd[m]
+    zona = emparejar([zonas_del_dia(d, N) for d in range(5)], N)
     cz = collections.Counter(); cd = collections.Counter()
     for i in range(n): cz[zona[i]] += peso[i]; cd[(zona[i], dia[i])] += peso[i]
-    print(N, 'zonas', min(cz.values()), max(cz.values()), 'por día', min(cd.values()), max(cd.values()))
+    por_dia = [[cd[(z, d)] for z in range(N)] for d in range(5)]
+    print(N, 'zonas', min(cz.values()), max(cz.values()), 'por día (mín-máx dentro de cada día)', [f'{min(x)}-{max(x)}' for x in por_dia])
     res[N] = [[int(zona[i]) + 1, int(dia[i]) + 1] for i in range(n)]
 json.dump(res, open('asignacion.json', 'w'), separators=(',', ':'))

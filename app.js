@@ -369,10 +369,10 @@
       b.addEventListener('click', async () => { estado('Cargando…'); await cargarAsignacion(e); esc = e; destino = null; estado(''); armarSelects(); refrescar(); });
       eb.appendChild(b);
     }
-    document.querySelectorAll('[data-vista]').forEach(b => b.addEventListener('click', () => { vista = b.dataset.vista; destino = null; refrescar(); }));
+    document.querySelectorAll('[data-vista]').forEach(b => b.addEventListener('click', () => { vista = b.dataset.vista; destino = null; refrescar(); if (vista === 'zona') encuadrarZona(); }));
     document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => { herramienta = b.dataset.tool; refrescar(); }));
     $('#sel-dia').addEventListener('change', e => { diaSel = Number(e.target.value); destino = null; refrescar(); });
-    $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); destino = null; refrescar(); });
+    $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); destino = null; refrescar(); encuadrarZona(); });
     ['#ck-cli', '#ck-tel', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
     $('#btn-deshacer').addEventListener('click', deshacer);
     $('#btn-guardar').addEventListener('click', guardar);
@@ -383,6 +383,12 @@
     window.addEventListener('beforeunload', e => { if (contarPendientes()) { e.preventDefault(); e.returnValue = ''; } });
     const sd = $('#sel-dia'); DIAS.forEach((d, i) => sd.appendChild(new Option(d, i)));
     armarSelects();
+  }
+  // acerca el mapa a los clientes de la zona elegida
+  function encuadrarZona() {
+    const A = asig[esc];
+    const pts = clientes.filter(c => c.estado === 'Visita' && A.zona[c.manzana] === zonaSel).map(c => [c.lat, c.lng]);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
   }
   function armarSelects() {
     const sz = $('#sel-zona'); sz.textContent = '';
