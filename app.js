@@ -70,12 +70,19 @@
     }
     asig[e] = { zona, dia };
     if (RUTAS_PROPUESTA[e] && !visitas[e]) {
-      const filas = LOCAL ? (await (await fetch(`datos/local/visitas_${RUTAS_PROPUESTA[e].clave}.json`)).json()).map(([codigo, semana, orden, zona, dia]) => ({ codigo, semana, orden, zona, dia }))
-        : await traerTodo('zonas_visitas', 'codigo,semana,orden,zona,dia', q => q.eq('escenario', e).order('codigo'));
+      let filas;
+      if (LOCAL) {
+        const tr = new Map(((await (await fetch('datos/local/tramos.json')).json())[RUTAS_PROPUESTA[e].clave === 'zz' ? 'zz' : 'ww'] || []).map(([c, s, m, t]) => [c + '|' + s, [m, t]]));
+        filas = (await (await fetch(`datos/local/visitas_${RUTAS_PROPUESTA[e].clave}.json`)).json()).map(([codigo, semana, orden, zona, dia]) => {
+          const t = tr.get(codigo + '|' + semana) || [null, null];
+          return { codigo, semana, orden, zona, dia, tramo_m: t[0], tramo_s: t[1] };
+        });
+      } else filas = await traerTodo('zonas_visitas', 'codigo,semana,orden,zona,dia,tramo_m,tramo_s', q => q.eq('escenario', e).order('codigo'));
       const m = new Map();
       for (const f of filas) {
-        const v = m.get(f.codigo) || { sem: new Set(), orden: {}, zona: f.zona, dia: f.dia };
-        v.sem.add(f.semana); v.orden[f.semana] = f.orden; m.set(f.codigo, v);
+        // tramo: metros y segundos de manejo por calle desde la parada anterior, en el orden de la propuesta
+        const v = m.get(f.codigo) || { sem: new Set(), orden: {}, tramo: {}, zona: f.zona, dia: f.dia };
+        v.sem.add(f.semana); v.orden[f.semana] = f.orden; v.tramo[f.semana] = f.tramo_m == null ? null : [f.tramo_m, f.tramo_s]; m.set(f.codigo, v);
       }
       visitas[e] = m;
     }
@@ -630,7 +637,13 @@
       title: `${i + 1}. #${c.codigo} ${c.cliente}`,
     }).addTo(rutaCapa));
     map.fitBounds(L.latLngBounds(o.map(c => [c.lat, c.lng])), { padding: [40, 40] });
-    $('#ruta-info').textContent = `${nomZona(z)} · ${DIAS[d - 1]}${deProp ? ` · semana ${semanaSel}, ${propuesta().optimizada ? 'orden WW611' : ordenProp ? 'orden que trae ZZ' : 'orden optimizado'}` : ''}: ${o.length} clientes, unos ${(tot * 1.3).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km del primero al último.`;
+    // con el orden guardado de la propuesta hay km y minutos reales por calle (auto/moto, respetando manos); si no, estimado
+    const tramos = ordenProp ? o.slice(1).map(c => visDe(c).tramo[semanaSel]) : [];
+    const real = ordenProp && tramos.length && tramos.every(Boolean);
+    const fmt = x => x.toLocaleString('es-AR', { maximumFractionDigits: 1 });
+    const largo = real ? `${fmt(tramos.reduce((a, t) => a + t[0], 0) / 1000)} km y ${Math.round(tramos.reduce((a, t) => a + t[1], 0) / 60)} min de manejo por calle (auto o moto, sin contar el tiempo en cada cliente)`
+      : `unos ${fmt(tot * 1.3)} km estimados (línea recta × 1,3)`;
+    $('#ruta-info').textContent = `${nomZona(z)} · ${DIAS[d - 1]}${deProp ? ` · semana ${semanaSel}, ${propuesta().optimizada ? 'orden WW611' : ordenProp ? 'orden que trae ZZ' : 'orden optimizado'}` : ''}: ${o.length} clientes, ${largo} del primero al último.`;
     $('#btn-ruta-csv').disabled = $('#btn-ruta-quitar').disabled = false;
   }
   function quitarRuta() {

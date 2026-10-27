@@ -64,8 +64,11 @@ create table if not exists public.zonas_visitas (
   orden     integer,
   zona      integer not null,
   dia       smallint not null check (dia between 1 and 6),
+  tramo_m   integer,   -- metros de manejo por calle desde la parada anterior (en el orden guardado)
+  tramo_s   integer,   -- segundos de manejo por calle desde la parada anterior
   primary key (escenario, codigo, semana)
 );
 alter table public.zonas_visitas enable row level security;
 drop policy if exists zonas_visitas_ver on public.zonas_visitas;
 create policy zonas_visitas_ver on public.zonas_visitas for select to authenticated using (public.zonas_es_admin());
+alter table public.zonas_visitas add column if not exists tramo_m integer, add column if not exists tramo_s integer;
