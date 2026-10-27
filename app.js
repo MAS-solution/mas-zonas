@@ -81,7 +81,7 @@
       if (LOCAL) {
         clientes = await (await fetch('datos/local/clientes.json')).json();
         window._localAsig = await (await fetch('datos/local/asignacion.json')).json();
-        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : b - a);
+        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : (a >= 100) - (b >= 100) || b - a);
       } else {
         clientes = await traerTodo('zonas_clientes', 'codigo,cliente,vendedor,segmento,fact_mes,estado,lat,lng,manzana');
         if (!RECUPERO) {
@@ -91,7 +91,7 @@
         recGuardado = new Set(recup);
         const { data, error } = await sb.from('zonas_asignacion').select('escenario').eq('manzana', 0);
         if (error) throw error;
-        escenarios = data.map(r => r.escenario).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : b - a);
+        escenarios = data.map(r => r.escenario).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : (a >= 100) - (b >= 100) || b - a);
         if (!escenarios.length) throw new Error(RECUPERO ? 'todavía no están cargadas las zonas de recupero' : 'no hay escenarios');
       }
       esc = escenarios[0];
@@ -177,12 +177,15 @@
     if (!g) return null;
     return vista === 'zonasDia' ? COL_ZONA[(g - 1) % COL_ZONA.length] : COL_DIA[g - 1];
   }
-  const nZonas = () => esc;
+  // Propuestas de afuera (escenario >= 100): zona z = ruta RUTAS_PROPUESTA[e][z - 1]
+  const RUTAS_PROPUESTA = { 115: { nombre: 'Propuesta ZZ', rutas: [31, 41, 42, 43, 44, 47, 48, 49, 51, 52, 53, 54, 55, 57, 58] } };
+  const propuesta = () => RUTAS_PROPUESTA[esc];
+  const nZonas = () => propuesta() ? propuesta().rutas.length : esc;
   // recupero quincenal (escenario 8): zona 2v-1 = vendedor v semana A, zona 2v = semana B
   const quincenal = () => RECUPERO && esc === 8;
-  const nomZona = z => quincenal() ? `V${Math.ceil(z / 2)} · semana ${z % 2 ? 'A' : 'B'}` : `Zona ${z}`;
-  const cortoZona = z => quincenal() ? `V${Math.ceil(z / 2)}${z % 2 ? 'A' : 'B'}` : `Z${z}`;
-  const nomEsc = e => RECUPERO && e === 8 ? '4 vendedores · quincenal' : `${e} vendedores`;
+  const nomZona = z => quincenal() ? `V${Math.ceil(z / 2)} · semana ${z % 2 ? 'A' : 'B'}` : propuesta() ? `Ruta ${propuesta().rutas[z - 1]}` : `Zona ${z}`;
+  const cortoZona = z => quincenal() ? `V${Math.ceil(z / 2)}${z % 2 ? 'A' : 'B'}` : propuesta() ? `R${propuesta().rutas[z - 1]}` : `Z${z}`;
+  const nomEsc = e => RECUPERO && e === 8 ? '4 vendedores · quincenal' : RUTAS_PROPUESTA[e] ? RUTAS_PROPUESTA[e].nombre : `${e} vendedores`;
 
   // ---------- Mapa ----------
   function armarMapa() {
@@ -499,7 +502,7 @@
     let items = [];
     if (vista === 'dias') { $('#destino-tit').textContent = RECUPERO ? 'Días (telefónicos)' : 'Días (clientes de visita)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: nomZona(z), extra: `${num(tot.get(z) || 0)} en ${quincenal() ? 'su semana' : 'la semana'}` }); }
-    else { $('#destino-tit').textContent = `Días de ${quincenal() ? nomZona(zonaSel) : 'la zona ' + zonaSel} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
+    else { $('#destino-tit').textContent = `Días de ${quincenal() || propuesta() ? nomZona(zonaSel).replace('Ruta', 'la ruta') : 'la zona ' + zonaSel} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     const vals = items.map(it => c.get(it.g) || 0), prom = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
     for (const it of items) {
       const d = document.createElement('div');
@@ -630,14 +633,14 @@
         + rings.map(r => `<Polygon><outerBoundaryIs><LinearRing><coordinates>${r.map(p => p[0] + ',' + p[1]).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon>`).join('')
         + '</MultiGeometry></Placemark>\n';
     }
-    descargar(`zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : esc + '_vendedores'}.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${nomEsc(esc)}</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
+    descargar(`zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : propuesta() ? 'propuesta_zz' : esc + '_vendedores'}.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${nomEsc(esc)}</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
   }
   function exportarCSV() {
     const A = asig[esc];
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
     const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', RECUPERO ? 'cuenta_en_recupero' : 'en_ruta', 'fact_mes', 'zona', 'zona_nombre', 'dia']];
     for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, recup.has(c.codigo) ? 'si' : 'no', enRuta(c) ? 'si' : 'no', Math.round(c.fact_mes), A.zona[c.manzana], nomZona(A.zona[c.manzana]), DIAS[A.dia[c.manzana] - 1]]);
-    descargar(`clientes_zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : esc + '_vendedores'}.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+    descargar(`clientes_zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : propuesta() ? 'propuesta_zz' : esc + '_vendedores'}.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   // ---------- Ruta de una zona en un día ----------
