@@ -80,3 +80,18 @@ begin
 end $$;
 revoke all on function public.zonas_recuperar_guardar(text[], text[]) from public, anon;
 grant execute on function public.zonas_recuperar_guardar(text[], text[]) to authenticated;
+
+-- Visitas de una propuesta de afuera (escenario >= 100): en qué semana del ciclo de 4 se visita cada cliente,
+-- en qué orden dentro del día, y su ruta (zona) y día según la propuesta (cliente por cliente, no por manzana).
+create table if not exists public.zonas_visitas (
+  escenario integer not null,
+  codigo    text not null references public.zonas_clientes(codigo) on delete cascade,
+  semana    smallint not null check (semana between 1 and 4),
+  orden     integer,
+  zona      integer not null,
+  dia       smallint not null check (dia between 1 and 6),
+  primary key (escenario, codigo, semana)
+);
+alter table public.zonas_visitas enable row level security;
+drop policy if exists zonas_visitas_ver on public.zonas_visitas;
+create policy zonas_visitas_ver on public.zonas_visitas for select to authenticated using (public.zonas_es_admin());

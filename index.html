@@ -36,6 +36,18 @@
         <div class="seg" id="esc-btns" role="group" aria-label="Escenario"></div>
       </div>
 
+      <div class="campo" id="campo-semana" hidden>
+        <span class="etq">Semana del ciclo</span>
+        <div class="seg" id="sem-btns" role="group" aria-label="Semana del ciclo">
+          <button type="button" data-sem="0" aria-pressed="true">Todas</button>
+          <button type="button" data-sem="1" aria-pressed="false">Semana 1</button>
+          <button type="button" data-sem="2" aria-pressed="false">Semana 2</button>
+          <button type="button" data-sem="3" aria-pressed="false">Semana 3</button>
+          <button type="button" data-sem="4" aria-pressed="false">Semana 4</button>
+        </div>
+        <p class="ayuda" id="sem-ayuda"></p>
+      </div>
+
       <div class="campo">
         <span class="etq">Vista</span>
         <div class="seg" role="group" aria-label="Vista">
@@ -87,6 +99,7 @@
           <button id="btn-ruta-csv" class="btn" type="button" disabled>CSV</button>
           <button id="btn-ruta-quitar" class="btn ghost" type="button" disabled>Quitar</button>
         </div>
+        <label class="ck" id="ck-orden-prop-l" hidden><input type="checkbox" id="ck-orden-prop" checked> Orden de la propuesta (destildado: orden optimizado)</label>
         <p class="ayuda" id="ruta-info"></p>
       </div>
 
