@@ -50,8 +50,6 @@ select,input[type=search]{padding:8px 10px;border:1px solid var(--line);border-r
 .modo{text-decoration:none;text-align:center}
 .acciones select{flex:1;width:auto;min-width:0}
 .nro{background:#14213d;color:#fff;border:1.5px solid #fff;border-radius:50%;display:grid !important;place-items:center;font:600 10px var(--sans);box-shadow:0 1px 3px rgba(0,0,0,.35)}
-.nro.rec{background:#7c3aed}
-.nro.t700{background:#111;border-color:#f6ad55}
 .dot-ck{width:10px;height:10px;border-radius:50%;flex:none}
 
 .destinos{display:grid;gap:2px;max-height:38vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px}

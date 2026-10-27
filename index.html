@@ -24,12 +24,10 @@
   <main id="app" class="app" hidden>
     <aside class="panel">
       <header class="panel-head">
-        <h1>MAS Zonas<span data-solo="recupero" hidden> · Recupero</span></h1>
+        <h1>MAS Zonas</h1>
         <button id="btn-salir" class="btn ghost small" type="button">Salir</button>
       </header>
 
-      <a id="ir-modo" class="btn small modo" href="?modo=recupero"></a>
-      <p class="ayuda" data-solo="recupero" hidden>Zonas para vendedores nuevos que salen a levantar los telefónicos (700 y otros) para recuperar ventas y volumen. Los días son los del sector de los clientes con venta. Destildá un tipo de telefónico para ver las cuentas solo con el otro. En el escenario quincenal cada vendedor alterna semana A y semana B, así cada telefónico se visita cada dos semanas.</p>
 
       <div class="campo">
         <span class="etq">Escenario</span>
@@ -57,7 +55,7 @@
         </div>
         <select id="sel-dia" aria-label="Día" hidden></select>
         <select id="sel-zona" aria-label="Zona" hidden></select>
-        <p class="ayuda" data-solo="visita">Cada zona (vendedor) tiene 5 partes, una por día. El día de cada cliente es el que ya tiene en la ruta de Gescom.</p>
+        <p class="ayuda">Cada ruta (vendedor) tiene 5 partes, una por día. WW611 es la misma propuesta que ZZ (rutas, días y semanas) con el recorrido de cada día optimizado.</p>
       </div>
 
       <div class="campo">
@@ -66,7 +64,6 @@
           <button type="button" data-tool="mover" aria-pressed="true">Mover mapa</button>
           <button type="button" data-tool="pincel" aria-pressed="false">Pincel</button>
           <button type="button" data-tool="lazo" aria-pressed="false">Lazo</button>
-          <button type="button" data-tool="recuperar" aria-pressed="false" data-solo="visita">Recuperar</button>
         </div>
         <p class="ayuda" id="ayuda-tool">Arrastrá para moverte. Tocá una manzana para ver su zona y día.</p>
       </div>
@@ -82,11 +79,6 @@
       </div>
       <p id="estado" class="estado"></p>
 
-      <div class="campo" data-solo="visita">
-        <span class="etq">Recuperar telefónicos</span>
-        <p class="ayuda" id="rec-resumen"></p>
-        <p class="ayuda">Con la herramienta Recuperar pasás telefónicos a visita: suman en la zona y el día de su manzana, y se ven con borde negro (700) o violeta (otros).</p>
-      </div>
 
       <div class="campo">
         <span class="etq">Ruta</span>
@@ -99,15 +91,13 @@
           <button id="btn-ruta-csv" class="btn" type="button" disabled>CSV</button>
           <button id="btn-ruta-quitar" class="btn ghost" type="button" disabled>Quitar</button>
         </div>
-        <label class="ck" id="ck-orden-prop-l" hidden><input type="checkbox" id="ck-orden-prop" checked> Orden de la propuesta (destildado: orden optimizado)</label>
+        <label class="ck" id="ck-orden-prop-l" hidden><input type="checkbox" id="ck-orden-prop" checked> Orden que trae ZZ (destildado: optimizado)</label>
         <p class="ayuda" id="ruta-info"></p>
       </div>
 
       <div class="campo">
         <span class="etq">Mostrar</span>
-        <label class="ck"><input type="checkbox" id="ck-cli" checked> Clientes de visita<span data-solo="recupero" hidden> (en gris)</span></label>
-        <label class="ck"><input type="checkbox" id="ck-tel700"> <span class="dot-ck" style="background:#111"></span> Telefónicos 700</label>
-        <label class="ck"><input type="checkbox" id="ck-telD"> <span class="dot-ck" style="background:#7c3aed"></span> Telefónicos otros</label>
+        <label class="ck"><input type="checkbox" id="ck-cli" checked> Clientes</label>
         <label class="ck"><input type="checkbox" id="ck-otras" checked> El resto en gris</label>
       </div>
 

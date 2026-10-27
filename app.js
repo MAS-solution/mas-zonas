@@ -6,29 +6,19 @@
   const COL_ZONA = ['#4f8ef7', '#f7614f', '#3fb67e', '#c74fa8', '#e6a817', '#17a2b8', '#a0522d', '#7b4fc7', '#d94f6b', '#2e7d32',
     '#ff8f00', '#5c6bc0', '#8d6e63', '#00897b', '#c0ca33', '#6d4c41', '#ec407a', '#26a69a', '#7e57c2', '#9e9d24'];
   const LOCAL = new URLSearchParams(location.search).has('local');
-  // ?modo=recupero: zonas para vendedores nuevos que salen a levantar los telefónicos (escenarios < 10)
-  const RECUPERO = new URLSearchParams(location.search).get('modo') === 'recupero';
   const $ = s => document.querySelector(s);
-  if (RECUPERO) { $('#ck-tel700').checked = $('#ck-telD').checked = true; $('#ck-cli').checked = false; document.title = 'MAS Zonas · Recupero'; }
   const num = x => Math.round(x).toLocaleString('es-AR');
 
   let sb = null, usuario = null;
-  let man = [], clientes = [], porManzana = [], peso = null, telPorManzana = [];
+  let man = [], clientes = [], porManzana = [], peso = null;
   let escenarios = [], esc = 0;
   const asig = {};            // esc -> { zona: Int16Array, dia: Int8Array }
   const pendientes = {};      // esc -> Map(manzana -> [zona, dia])
   const historial = [];       // [{esc, cambios: [[m, zonaAntes, diaAntes, zonaDesp, diaDesp]]}]
   let vista = 'dias', diaSel = 0, zonaSel = 1, destino = null, herramienta = 'mover';
   let map, capa, segs, bordesCache = null;
-  // telefónicos que se pasan a visita para recuperarlos (valen para todos los escenarios)
-  const recup = new Set(); let recGuardado = new Set(), sinTablaRec = false;
-  const esTel = c => c.estado.startsWith('Telefónico');
-  // los clientes que cuentan en las zonas: de visita (más los recuperados) o, en el modo recupero, los telefónicos tildados
-  // en una propuesta de afuera cuentan todos los clientes que la propuesta visita (en la semana elegida)
-  const enRuta = c => RECUPERO
-    ? (c.estado === 'Telefónico (camión 700)' ? $('#ck-tel700').checked : c.estado === 'Telefónico' && $('#ck-telD').checked)
-    : propuesta() ? !!visDe(c) && (!semanaSel || visDe(c).sem.has(semanaSel))
-      : c.estado === 'Visita' || recup.has(c.codigo);
+  // cuentan los clientes que la propuesta visita (en la semana elegida, o en todo el ciclo)
+  const enRuta = c => !!visDe(c) && (!semanaSel || visDe(c).sem.has(semanaSel));
   let rutaCapa = null, rutaActual = null;
   // propuesta de afuera: semana(s) del ciclo de 4 y orden de visita de cada cliente (zonas_visitas)
   const visitas = {};         // esc -> Map(codigo -> { sem: Set, orden: {semana: n}, zona, dia })
@@ -80,7 +70,7 @@
     }
     asig[e] = { zona, dia };
     if (RUTAS_PROPUESTA[e] && !visitas[e]) {
-      const filas = LOCAL ? (await (await fetch('datos/local/visitas.json')).json()).map(([codigo, semana, orden, zona, dia]) => ({ codigo, semana, orden, zona, dia }))
+      const filas = LOCAL ? (await (await fetch(`datos/local/visitas_${RUTAS_PROPUESTA[e].clave}.json`)).json()).map(([codigo, semana, orden, zona, dia]) => ({ codigo, semana, orden, zona, dia }))
         : await traerTodo('zonas_visitas', 'codigo,semana,orden,zona,dia', q => q.eq('escenario', e).order('codigo'));
       const m = new Map();
       for (const f of filas) {
@@ -97,18 +87,13 @@
       if (LOCAL) {
         clientes = await (await fetch('datos/local/clientes.json')).json();
         window._localAsig = await (await fetch('datos/local/asignacion.json')).json();
-        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : (a >= 100) - (b >= 100) || b - a);
+        escenarios = Object.keys(window._localAsig).map(Number).filter(e => RUTAS_PROPUESTA[e]).sort((a, b) => b - a);
       } else {
         clientes = await traerTodo('zonas_clientes', 'codigo,cliente,vendedor,segmento,fact_mes,estado,lat,lng,manzana');
-        if (!RECUPERO) {
-          try { for (const r of await traerTodo('zonas_recuperar', 'codigo')) recup.add(r.codigo); }
-          catch (e) { sinTablaRec = true; }
-        }
-        recGuardado = new Set(recup);
         const { data, error } = await sb.from('zonas_asignacion').select('escenario').eq('manzana', 0);
         if (error) throw error;
-        escenarios = data.map(r => r.escenario).filter(e => RECUPERO ? e < 10 : e >= 10).sort((a, b) => RECUPERO ? a - b : (a >= 100) - (b >= 100) || b - a);
-        if (!escenarios.length) throw new Error(RECUPERO ? 'todavía no están cargadas las zonas de recupero' : 'no hay escenarios');
+        escenarios = data.map(r => r.escenario).filter(e => RUTAS_PROPUESTA[e]).sort((a, b) => b - a);
+        if (!escenarios.length) throw new Error('no hay propuestas cargadas');
       }
       esc = escenarios[0];
       await cargarAsignacion(esc);
@@ -127,12 +112,10 @@
   function prepararDatos() {
     peso = new Int32Array(man.length);
     porManzana = man.map(() => []);
-    telPorManzana = new Int32Array(man.length);
     for (const c of clientes) {
       c.wx = mx(c.lng); c.wy = my(c.lat);
       porManzana[c.manzana].push(c);
-      if (RECUPERO ? esTel(c) : c.estado === 'Visita') peso[c.manzana]++;
-      if (c.estado.startsWith('Telefónico')) telPorManzana[c.manzana]++;
+      peso[c.manzana]++;
     }
     // geometría en coordenadas de mundo (zoom 0) + caja de cada manzana
     const segMap = new Map();
@@ -194,14 +177,14 @@
     return vista === 'zonasDia' ? COL_ZONA[(g - 1) % COL_ZONA.length] : COL_DIA[g - 1];
   }
   // Propuestas de afuera (escenario >= 100): zona z = ruta RUTAS_PROPUESTA[e][z - 1]
-  const RUTAS_PROPUESTA = { 115: { nombre: 'Propuesta ZZ', rutas: [31, 41, 42, 43, 44, 47, 48, 49, 51, 52, 53, 54, 55, 57, 58] } };
+  // 115 = ZZ tal cual vino; 116 = WW611: mismas rutas, días y semanas, con el orden de visita optimizado
+  const RUTAS_ZZ = [31, 41, 42, 43, 44, 47, 48, 49, 51, 52, 53, 54, 55, 57, 58];
+  const RUTAS_PROPUESTA = { 115: { nombre: 'Propuesta ZZ', clave: 'zz', rutas: RUTAS_ZZ }, 116: { nombre: 'Propuesta WW611', clave: 'ww611', rutas: RUTAS_ZZ, optimizada: true } };
   const propuesta = () => RUTAS_PROPUESTA[esc];
-  const nZonas = () => propuesta() ? propuesta().rutas.length : esc;
-  // recupero quincenal (escenario 8): zona 2v-1 = vendedor v semana A, zona 2v = semana B
-  const quincenal = () => RECUPERO && esc === 8;
-  const nomZona = z => quincenal() ? `V${Math.ceil(z / 2)} · semana ${z % 2 ? 'A' : 'B'}` : propuesta() ? `Ruta ${propuesta().rutas[z - 1]}` : `Zona ${z}`;
-  const cortoZona = z => quincenal() ? `V${Math.ceil(z / 2)}${z % 2 ? 'A' : 'B'}` : propuesta() ? `R${propuesta().rutas[z - 1]}` : `Z${z}`;
-  const nomEsc = e => RECUPERO && e === 8 ? '4 vendedores · quincenal' : RUTAS_PROPUESTA[e] ? RUTAS_PROPUESTA[e].nombre : `${e} vendedores`;
+  const nZonas = () => propuesta().rutas.length;
+  const nomZona = z => `Ruta ${propuesta().rutas[z - 1]}`;
+  const cortoZona = z => `R${propuesta().rutas[z - 1]}`;
+  const nomEsc = e => RUTAS_PROPUESTA[e].nombre;
 
   // ---------- Mapa ----------
   function armarMapa() {
@@ -272,20 +255,15 @@
     ctx.strokeStyle = 'rgba(20,33,61,.55)'; ctx.lineWidth = 1 / k; ctx.stroke(finos);
     ctx.strokeStyle = '#14213d'; ctx.lineWidth = 2.4 / k; ctx.stroke(gruesos);
     // clientes
-    const verCli = $('#ck-cli').checked, ver700 = $('#ck-tel700').checked, verD = $('#ck-telD').checked;
+    const verCli = $('#ck-cli').checked;
     const r = Math.max(1.6, Math.min(4.5, (map.getZoom() - 10) * 0.9)) / k;
     for (const c of clientes) {
       if (c.wx < vx0 || c.wx > vx1 || c.wy < vy0 || c.wy > vy1) continue;
-      const t700 = c.estado === 'Telefónico (camión 700)', tD = c.estado === 'Telefónico';
-      // en el modo recupero los telefónicos son los que cuentan y los de visita quedan de fondo en gris
-      const prop = !RECUPERO && propuesta();
-      const rec = RECUPERO ? enRuta(c) : prop ? enRuta(c) && (t700 || tD) : recup.has(c.codigo), vis = RECUPERO || prop ? enRuta(c) : c.estado === 'Visita' || rec;
-      if (prop ? !vis || !verCli : RECUPERO ? !(vis || (verCli && c.estado === 'Visita')) : vis ? !verCli : !((ver700 && t700) || (verD && tD))) continue;
-      if (vis && vista !== 'dias' && !grupo(c.manzana) && !otras) continue;
-      ctx.beginPath(); ctx.arc(c.wx, c.wy, rec ? r * 1.25 : r, 0, Math.PI * 2);
-      ctx.fillStyle = vis ? (colorGrupo(grupo(c.manzana)) || '#6b7280') : c.estado === 'Visita' ? '#9aa3b5' : t700 ? '#111' : '#7c3aed';
-      // los telefónicos que cuentan llevan el borde del color de su tipo (negro 700, violeta otros)
-      ctx.fill(); ctx.lineWidth = rec ? r * 0.8 : r * 0.45; ctx.strokeStyle = rec ? (t700 ? '#111' : '#7c3aed') : '#fff'; ctx.stroke();
+      if (!verCli || !enRuta(c)) continue;
+      if (vista !== 'dias' && !grupo(c.manzana) && !otras) continue;
+      ctx.beginPath(); ctx.arc(c.wx, c.wy, r, 0, Math.PI * 2);
+      ctx.fillStyle = colorGrupo(grupo(c.manzana)) || '#6b7280';
+      ctx.fill(); ctx.lineWidth = r * 0.45; ctx.strokeStyle = '#fff'; ctx.stroke();
     }
     // etiquetas
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -353,7 +331,6 @@
     const mundo = e => { const p = map.mouseEventToContainerPoint(e); const { k, ox, oy } = transformacion(); return [(p.x - ox) / k, (p.y - oy) / k]; };
     cont.addEventListener('pointerdown', e => {
       if (herramienta === 'mover' || e.button !== 0 || e.target.closest('.leaflet-control')) return;
-      if (herramienta === 'recuperar') { e.preventDefault(); cont.setPointerCapture(e.pointerId); lazo = [mundo(e)]; return; }
       if (destino == null) { estado('Elegí primero con qué pintar.'); return; }
       e.preventDefault(); cont.setPointerCapture(e.pointerId);
       if (herramienta === 'pincel') { trazo = []; aplicar(manzanaEn(...mundo(e))); capa.dibujar(); }
@@ -365,7 +342,6 @@
     });
     const fin = e => {
       if (trazo && herramienta === 'pincel') cerrarTrazo();
-      if (lazo && herramienta === 'recuperar') { recuperarEn(lazo); lazo = null; quitarLazo(); return; }
       if (lazo) {
         trazo = [];
         if (lazo.length > 2) {
@@ -387,32 +363,6 @@
       mostrarInfo(id, e.latlng);
     });
   }
-  // Recuperar: un toque pasa (o saca) el telefónico más cercano; un contorno pasa todos los visibles de adentro
-  function recuperarEn(lazo) {
-    const { k } = transformacion();
-    const visible = c => esTel(c) && (recup.has(c.codigo) || (c.estado === 'Telefónico' ? $('#ck-telD').checked : $('#ck-tel700').checked));
-    const cambios = [];
-    const xs = lazo.map(p => p[0]), ys = lazo.map(p => p[1]);
-    const ancho = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * k;
-    if (lazo.length <= 3 || ancho < 8) {
-      const [x, y] = lazo[0]; let mejor = null, dm = (12 / k) ** 2;
-      for (const c of clientes) {
-        if (!visible(c)) continue;
-        const d = (c.wx - x) ** 2 + (c.wy - y) ** 2; if (d < dm) { dm = d; mejor = c; }
-      }
-      if (mejor) cambios.push([mejor.codigo, recup.has(mejor.codigo), !recup.has(mejor.codigo)]);
-      else estado('Tocá un punto de telefónico (negro o violeta).');
-    } else {
-      for (const c of clientes) if (visible(c) && !recup.has(c.codigo) && dentroDe(lazo, c.wx, c.wy)) cambios.push([c.codigo, false, true]);
-    }
-    if (!cambios.length) { refrescar(); return; }
-    for (const [cod, , desp] of cambios) desp ? recup.add(cod) : recup.delete(cod);
-    historial.push({ rec: cambios }); refrescar();
-  }
-  const pendRec = () => ({
-    altas: [...recup].filter(c => !recGuardado.has(c)),
-    bajas: [...recGuardado].filter(c => !recup.has(c)),
-  });
 
   let lazoLinea = null;
   function dibujarLazo(l) {
@@ -430,19 +380,15 @@
     box.textContent = '';
     const add = (t, b) => { const el = document.createElement(b ? 'b' : 'div'); el.textContent = t; box.appendChild(el); };
     add(`${nomZona(A.zona[id])} · ${DIAS[A.dia[id] - 1]}`, true);
-    add(`${peso[id]} clientes de visita${telPorManzana[id] ? ` · ${telPorManzana[id]} telefónicos` : ''}`);
-    for (const c of cs.slice(0, 8)) add(`#${c.codigo} ${c.cliente} · V${c.vendedor}${c.estado === 'Visita' ? '' : ' · ' + c.estado.toLowerCase()}${recup.has(c.codigo) ? ' · a recuperar' : ''}`);
+    add(`${peso[id]} cliente${peso[id] === 1 ? '' : 's'}`);
+    const SEM = v => v.sem.size === 4 ? 'semanal' : v.sem.size === 2 ? `semanas ${[...v.sem].sort().join(' y ')}` : `semana ${[...v.sem][0]}`;
+    for (const c of cs.slice(0, 8)) add(`#${c.codigo} ${c.cliente} · V${c.vendedor}${visDe(c) ? ' · ' + SEM(visDe(c)) : ''}`);
     if (cs.length > 8) add(`y ${cs.length - 8} más`);
     box.hidden = false;
   }
 
   // ---------- Controles ----------
   function armarControles() {
-    // lo que es solo de un modo
-    document.querySelectorAll('[data-solo]').forEach(el => { el.hidden = el.dataset.solo !== (RECUPERO ? 'recupero' : 'visita'); });
-    const ir = $('#ir-modo'), q = new URLSearchParams(location.search);
-    RECUPERO ? q.delete('modo') : q.set('modo', 'recupero'); ['vista', 'dia', 'zona'].forEach(k => q.delete(k));
-    ir.href = '?' + q.toString(); ir.textContent = RECUPERO ? 'Ir a zonas de visita' : 'Ir a recupero de telefónicos';
     const eb = $('#esc-btns');
     for (const e of escenarios) {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = nomEsc(e); b.dataset.esc = e;
@@ -452,13 +398,11 @@
     document.querySelectorAll('[data-vista]').forEach(b => b.addEventListener('click', () => { vista = b.dataset.vista; destino = null; refrescar(); if (vista === 'zona') encuadrarZona(); }));
     document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => {
       herramienta = b.dataset.tool;
-      if (herramienta === 'recuperar' && !$('#ck-tel700').checked && !$('#ck-telD').checked) $('#ck-tel700').checked = $('#ck-telD').checked = true;
       refrescar();
     }));
     $('#sel-dia').addEventListener('change', e => { diaSel = Number(e.target.value); $('#ruta-dia').value = diaSel + 1; destino = null; refrescar(); });
     $('#sel-zona').addEventListener('change', e => { zonaSel = Number(e.target.value); $('#ruta-zona').value = zonaSel; destino = null; refrescar(); encuadrarZona(); });
     ['#ck-cli', '#ck-otras'].forEach(s => $(s).addEventListener('change', () => capa.dibujar()));
-    ['#ck-tel700', '#ck-telD'].forEach(s => $(s).addEventListener('change', () => RECUPERO ? refrescar() : capa.dibujar()));
     document.querySelectorAll('[data-sem]').forEach(b => b.addEventListener('click', () => { semanaSel = Number(b.dataset.sem); quitarRuta(); refrescar(); }));
     $('#btn-deshacer').addEventListener('click', deshacer);
     $('#btn-guardar').addEventListener('click', guardar);
@@ -505,11 +449,11 @@
 
   function refrescar() {
     document.querySelectorAll('[data-esc]').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.esc) === esc));
-    $('#campo-semana').hidden = RECUPERO || !propuesta();
-    $('#ck-orden-prop-l').hidden = RECUPERO || !propuesta() || !semanaSel;
+    $('#campo-semana').hidden = false;
+    $('#ck-orden-prop-l').hidden = !semanaSel || propuesta().optimizada;
     document.querySelectorAll('[data-sem]').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.sem) === semanaSel));
     if (propuesta()) $('#sem-ayuda').textContent = semanaSel
-      ? `Los clientes que la propuesta visita en la semana ${semanaSel}: semanales, quincenales y mensuales que caen esa semana. Borde negro: telefónicos del 700; violeta: telefónicos otros. La ruta sale en el orden de la propuesta.`
+      ? `Los clientes que la propuesta visita en la semana ${semanaSel}: semanales, quincenales y mensuales que caen esa semana. La ruta sale en el orden de la propuesta.`
       : 'Todos los clientes de la propuesta, cada uno una vez. Elegí una semana para ver solo los que se visitan esa semana y el recorrido en el orden de la propuesta.';
     document.querySelectorAll('[data-vista]').forEach(b => b.setAttribute('aria-pressed', b.dataset.vista === vista));
     document.querySelectorAll('[data-tool]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === herramienta));
@@ -519,15 +463,14 @@
     $('#mapa').classList.toggle('pincel', herramienta !== 'mover');
     $('#ayuda-tool').textContent = herramienta === 'mover' ? 'Arrastrá para moverte. Tocá una manzana para ver su zona, día y clientes.'
       : herramienta === 'pincel' ? 'Arrastrá sobre las manzanas para pasarlas a lo elegido abajo. Ctrl+Z deshace.'
-        : herramienta === 'recuperar' ? 'Tocá un telefónico para pasarlo a visita (o sacarlo), o dibujá un contorno para pasar todos los de adentro. Entran en la zona y el día de su manzana.'
           : 'Dibujá un contorno: todas las manzanas de adentro pasan a lo elegido abajo.';
     // destinos con conteos
     const { c, f, tot } = conteos();
     const box = $('#destinos'); box.textContent = '';
     let items = [];
-    if (vista === 'dias') { $('#destino-tit').textContent = RECUPERO ? 'Días (telefónicos)' : propuesta() ? (semanaSel ? `Días (visitas de la semana ${semanaSel})` : 'Días (clientes de la propuesta)') : 'Días (clientes de visita)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
-    else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: nomZona(z), extra: `${num(tot.get(z) || 0)} en ${quincenal() ? 'su semana' : propuesta() ? (semanaSel ? 'la semana ' + semanaSel : 'el ciclo') : 'la semana'}` }); }
-    else { $('#destino-tit').textContent = `Días de ${quincenal() || propuesta() ? nomZona(zonaSel).replace('Ruta', 'la ruta') : 'la zona ' + zonaSel} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
+    if (vista === 'dias') { $('#destino-tit').textContent = semanaSel ? `Días (visitas de la semana ${semanaSel})` : 'Días (clientes del ciclo)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
+    else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: nomZona(z), extra: `${num(tot.get(z) || 0)} en ${semanaSel ? 'la semana ' + semanaSel : 'el ciclo'}` }); }
+    else { $('#destino-tit').textContent = `Días de ${nomZona(zonaSel).replace('Ruta', 'la ruta')} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     const vals = items.map(it => c.get(it.g) || 0), prom = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
     for (const it of items) {
       const d = document.createElement('div');
@@ -542,7 +485,6 @@
       d.addEventListener('click', () => { destino = destino === it.g ? null : it.g; if (destino != null && herramienta === 'mover') herramienta = 'pincel'; refrescar(); });
       box.appendChild(d);
     }
-    resumenRecuperar();
     const np = contarPendientes();
     $('#btn-guardar').disabled = !np || LOCAL;
     $('#btn-guardar').textContent = np ? `Guardar (${np})` : 'Guardar';
@@ -550,28 +492,13 @@
     if (LOCAL && np) estado('Modo local: los cambios no se guardan.');
     capa && capa.dibujar();
   }
-  const contarPendientes = () => { const p = pendRec(); return Object.values(pendientes).reduce((a, m) => a + m.size, 0) + p.altas.length + p.bajas.length; };
+  const contarPendientes = () => Object.values(pendientes).reduce((a, m) => a + m.size, 0);
 
-  function resumenRecuperar() {
-    if (RECUPERO) return;
-    const A = asig[esc]; let n7 = 0, nD = 0, f = 0, enZona = 0;
-    for (const c of clientes) {
-      if (!recup.has(c.codigo)) continue;
-      if (c.estado === 'Telefónico') { nD++; f += c.fact_mes || 0; } else n7++;
-      if (A.zona[c.manzana] === zonaSel) enZona++;
-    }
-    let t = !(n7 + nD) ? 'Todavía no hay telefónicos pasados a visita.'
-      : `${num(n7 + nD)} a recuperar: ${num(n7)} del 700 y ${num(nD)} otros ($ ${num(f / 1000)} mil por mes de los otros).`
-        + (vista === 'zona' ? ` En la zona ${zonaSel}: ${num(enZona)}.` : '');
-    if (sinTablaRec) t += ' Falta crear la tabla en la base: por ahora no se puede guardar.';
-    $('#rec-resumen').textContent = t;
-  }
   const estado = t => { $('#estado').textContent = t; };
 
   function deshacer() {
     const h = historial.pop(); if (!h) return;
     const A = asig[h.esc];
-    if (h.rec) { for (const [cod, antes] of h.rec) antes ? recup.add(cod) : recup.delete(cod); refrescar(); return; }
     for (let i = h.cambios.length - 1; i >= 0; i--) {
       const [id, z0, d0] = h.cambios[i];
       A.zona[id] = z0; A.dia[id] = d0;
@@ -590,13 +517,6 @@
           if (error) throw error;
         }
         m.clear();
-      }
-      const { altas, bajas } = pendRec();
-      if (altas.length || bajas.length) {
-        if (sinTablaRec) throw new Error('falta crear la tabla de recuperados en la base');
-        const { error } = await sb.rpc('zonas_recuperar_guardar', { p_altas: altas, p_bajas: bajas });
-        if (error) throw error;
-        recGuardado = new Set(recup);
       }
       estado('Guardado ' + new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) + '.');
     } catch (e) { estado('No se pudo guardar: ' + (e.message || e)); }
@@ -658,14 +578,14 @@
         + rings.map(r => `<Polygon><outerBoundaryIs><LinearRing><coordinates>${r.map(p => p[0] + ',' + p[1]).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon>`).join('')
         + '</MultiGeometry></Placemark>\n';
     }
-    descargar(`zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : propuesta() ? 'propuesta_zz' : esc + '_vendedores'}.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${nomEsc(esc)}</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
+    descargar(`zonas_propuesta_${propuesta().clave}.kml`, `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Zonas ${nomEsc(esc)}</name>\n${pm}</Document></kml>`, 'application/vnd.google-earth.kml+xml');
   }
   function exportarCSV() {
     const A = asig[esc];
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
-    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'estado', 'a_recuperar', RECUPERO ? 'cuenta_en_recupero' : 'en_ruta', 'fact_mes', 'zona', 'zona_nombre', 'dia']];
-    for (const c of clientes) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, c.estado, recup.has(c.codigo) ? 'si' : 'no', enRuta(c) ? 'si' : 'no', Math.round(c.fact_mes), A.zona[c.manzana], nomZona(A.zona[c.manzana]), DIAS[A.dia[c.manzana] - 1]]);
-    descargar(`clientes_zonas_${RECUPERO ? 'recupero_' : ''}${quincenal() ? '4_vendedores_quincenal' : propuesta() ? 'propuesta_zz' : esc + '_vendedores'}.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+    const filas = [['codigo', 'cliente', 'vendedor_actual', 'segmento', 'fact_mes', 'ruta', 'dia', 'semanas']];
+    for (const c of clientes) { const v = visDe(c); if (v) filas.push([c.codigo, c.cliente, c.vendedor, c.segmento, Math.round(c.fact_mes), propuesta().rutas[v.zona - 1], v.dia === 6 ? 'Sábado' : DIAS[v.dia - 1], [...v.sem].sort().join(',')]); }
+    descargar(`clientes_propuesta_${propuesta().clave}.csv`, '﻿' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   // ---------- Ruta de una zona en un día ----------
@@ -695,7 +615,7 @@
   }
   function armarRuta() {
     const A = asig[esc], z = Number($('#ruta-zona').value), d = Number($('#ruta-dia').value);
-    const deProp = propuesta() && semanaSel, ordenProp = deProp && $('#ck-orden-prop').checked;
+    const deProp = !!semanaSel, ordenProp = deProp && (propuesta().optimizada || $('#ck-orden-prop').checked);
     const pts = deProp ? clientes.filter(c => enRuta(c) && visDe(c).zona === z && visDe(c).dia === d)
       : clientes.filter(c => enRuta(c) && A.zona[c.manzana] === z && A.dia[c.manzana] === d);
     quitarRuta();
@@ -706,13 +626,11 @@
     rutaCapa = L.layerGroup().addTo(map);
     L.polyline(o.map(c => [c.lat, c.lng]), { color: '#14213d', weight: 3, opacity: .8, interactive: false }).addTo(rutaCapa);
     o.forEach((c, i) => L.marker([c.lat, c.lng], {
-      icon: L.divIcon({ className: 'nro' + (recup.has(c.codigo) || (deProp && c.estado === 'Telefónico') ? ' rec' : deProp && c.estado === 'Telefónico (camión 700)' ? ' t700' : ''), html: String(i + 1), iconSize: [20, 20] }),
-      title: `${i + 1}. #${c.codigo} ${c.cliente}${recup.has(c.codigo) ? ' (a recuperar)' : ''}`,
+      icon: L.divIcon({ className: 'nro', html: String(i + 1), iconSize: [20, 20] }),
+      title: `${i + 1}. #${c.codigo} ${c.cliente}`,
     }).addTo(rutaCapa));
     map.fitBounds(L.latLngBounds(o.map(c => [c.lat, c.lng])), { padding: [40, 40] });
-    const nr = o.filter(c => recup.has(c.codigo)).length;
-    const n7 = deProp ? o.filter(c => c.estado === 'Telefónico (camión 700)').length : 0;
-    $('#ruta-info').textContent = `${nomZona(z)} · ${DIAS[d - 1]}${deProp ? ` · semana ${semanaSel}, ${ordenProp ? 'orden de la propuesta' : 'orden optimizado'}` : ''}: ${o.length} clientes${nr ? ` (${nr} a recuperar)` : ''}${n7 ? ` (${n7} del 700)` : ''}, unos ${(tot * 1.3).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km del primero al último.`;
+    $('#ruta-info').textContent = `${nomZona(z)} · ${DIAS[d - 1]}${deProp ? ` · semana ${semanaSel}, ${propuesta().optimizada ? 'orden WW611' : ordenProp ? 'orden que trae ZZ' : 'orden optimizado'}` : ''}: ${o.length} clientes, unos ${(tot * 1.3).toLocaleString('es-AR', { maximumFractionDigits: 1 })} km del primero al último.`;
     $('#btn-ruta-csv').disabled = $('#btn-ruta-quitar').disabled = false;
   }
   function quitarRuta() {
@@ -724,9 +642,9 @@
     if (!rutaActual) return;
     const { z, d, o } = rutaActual;
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
-    const filas = [['orden', 'codigo', 'cliente', 'vendedor_actual', 'estado', 'a_recuperar', 'lat', 'lng', 'mapa']];
-    o.forEach((c, i) => filas.push([i + 1, c.codigo, c.cliente, c.vendedor, c.estado, recup.has(c.codigo) ? 'si' : 'no', c.lat, c.lng, `https://www.google.com/maps?q=${c.lat},${c.lng}`]));
-    descargar(`ruta_${propuesta() ? cortoZona(z).toLowerCase() + (semanaSel ? '_semana' + semanaSel : '') : 'zona' + z}_${DIAS[d - 1].toLowerCase()}_${propuesta() ? 'propuesta_zz' : esc + '_vendedores'}.csv`, '\ufeff' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+    const filas = [['orden', 'codigo', 'cliente', 'vendedor_actual', 'lat', 'lng', 'mapa']];
+    o.forEach((c, i) => filas.push([i + 1, c.codigo, c.cliente, c.vendedor, c.lat, c.lng, `https://www.google.com/maps?q=${c.lat},${c.lng}`]));
+    descargar(`ruta_${cortoZona(z).toLowerCase()}${semanaSel ? '_semana' + semanaSel : ''}_${DIAS[d - 1].toLowerCase()}_propuesta_${propuesta().clave}.csv`, '\ufeff' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   iniciar();
