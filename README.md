@@ -4,8 +4,9 @@ Herramienta para armar y editar las zonas de visita de los vendedores de 611, ti
 cada **manzana** (polígono que forman las calles de OpenStreetMap) tiene una **zona** (vendedor)
 y un **día** (lunes a viernes). Como las zonas son manzanas enteras, los bordes siempre van por calles.
 
-- Propuestas: ZZ (rezonificación tal cual vino: rutas, días y semanas del ciclo de 4) y WW611
-  (la misma propuesta con el recorrido de cada día optimizado).
+- Propuestas: ZZ (rezonificación tal cual vino: rutas, días y semanas del ciclo de 4), WW611
+  (la misma propuesta con el recorrido de cada día optimizado) y Zona Molinos FV/FN (vendedores 61-65,
+  cada 2 semanas: FV con las semanas de hoy, FN con las semanas repartidas para que cada día sea más corto).
 - Selector de semana del ciclo (1-4) y ruta de cada día en orden de visita.
 - Vistas: días (toda la ciudad), zonas de un día, una zona con sus 5 días.
 - Edición con pincel o lazo, deshacer, guardar (Supabase), exportar KML para AXUM y CSV de clientes.

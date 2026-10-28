@@ -2,7 +2,8 @@
 // los bordes son calles porque las manzanas salen de las calles de OpenStreetMap.
 (function () {
   const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
-  const COL_DIA = ['#2b6cb0', '#dd6b20', '#2f855a', '#c53030', '#805ad5'];
+  const COL_DIA = ['#2b6cb0', '#dd6b20', '#2f855a', '#c53030', '#805ad5', '#718096'];
+  const nomDia = d => d === 6 ? 'Sábado' : DIAS[d - 1] || 'Sin día';
   const COL_ZONA = ['#4f8ef7', '#f7614f', '#3fb67e', '#c74fa8', '#e6a817', '#17a2b8', '#a0522d', '#7b4fc7', '#d94f6b', '#2e7d32',
     '#ff8f00', '#5c6bc0', '#8d6e63', '#00897b', '#c0ca33', '#6d4c41', '#ec407a', '#26a69a', '#7e57c2', '#9e9d24'];
   const LOCAL = new URLSearchParams(location.search).has('local');
@@ -72,7 +73,7 @@
     if (RUTAS_PROPUESTA[e] && !visitas[e]) {
       let filas;
       if (LOCAL) {
-        const tr = new Map(((await (await fetch('datos/local/tramos.json')).json())[RUTAS_PROPUESTA[e].clave === 'zz' ? 'zz' : 'ww'] || []).map(([c, s, m, t]) => [c + '|' + s, [m, t]]));
+        const tr = new Map(((await (await fetch('datos/local/tramos.json')).json())[{ zz: 'zz', ww611: 'ww' }[RUTAS_PROPUESTA[e].clave] || RUTAS_PROPUESTA[e].clave] || []).map(([c, s, m, t]) => [c + '|' + s, [m, t]]));
         filas = (await (await fetch(`datos/local/visitas_${RUTAS_PROPUESTA[e].clave}.json`)).json()).map(([codigo, semana, orden, zona, dia]) => {
           const t = tr.get(codigo + '|' + semana) || [null, null];
           return { codigo, semana, orden, zona, dia, tramo_m: t[0], tramo_s: t[1] };
@@ -102,7 +103,7 @@
         escenarios = data.map(r => r.escenario).filter(e => RUTAS_PROPUESTA[e]).sort((a, b) => b - a);
         if (!escenarios.length) throw new Error('no hay propuestas cargadas');
       }
-      esc = escenarios[0];
+      esc = escenarios.includes(116) ? 116 : escenarios[0];
       await cargarAsignacion(esc);
       prepararDatos();
       $('#cargando').hidden = true; $('#app').hidden = false;
@@ -175,6 +176,7 @@
   // grupo de una manzana: lo que la colorea y lo que se pinta
   function grupo(id) {
     const A = asig[esc];
+    if (!A.zona[id]) return 0;   // manzana sin zona en esta propuesta (ej. Molinos solo cubre parte de la ciudad)
     if (vista === 'dias') return A.dia[id];
     if (vista === 'zonasDia') return A.dia[id] === diaSel + 1 ? A.zona[id] : 0;
     return A.zona[id] === zonaSel ? A.dia[id] : 0;
@@ -185,12 +187,16 @@
   }
   // Propuestas de afuera (escenario >= 100): zona z = ruta RUTAS_PROPUESTA[e][z - 1]
   // 115 = ZZ tal cual vino; 116 = WW611: mismas rutas, días y semanas, con el orden de visita optimizado
+  // 117/118 = Zona Molinos (vendedores 61-65, cada 2 semanas): FV con las semanas de hoy, FN con las semanas repartidas
+  //           para que cada día sea más corto (mismo vendedor y mismo día). Zona z = vendedor.
   const RUTAS_ZZ = [31, 41, 42, 43, 44, 47, 48, 49, 51, 52, 53, 54, 55, 57, 58];
-  const RUTAS_PROPUESTA = { 115: { nombre: 'Propuesta ZZ', clave: 'zz', rutas: RUTAS_ZZ }, 116: { nombre: 'Propuesta WW611', clave: 'ww611', rutas: RUTAS_ZZ, optimizada: true } };
+  const RUTAS_PROPUESTA = { 115: { nombre: 'Propuesta ZZ', clave: 'zz', rutas: RUTAS_ZZ }, 116: { nombre: 'Propuesta WW611', clave: 'ww611', rutas: RUTAS_ZZ, optimizada: true, orden: 'orden WW611' },
+    117: { nombre: 'Zona Molinos FV', clave: 'molinos_fv', rutas: [61, 62, 63, 64, 65], optimizada: true, vendedores: true, orden: 'frecuencia vieja, orden optimizado' },
+    118: { nombre: 'Zona Molinos FN', clave: 'molinos_fn', rutas: [61, 62, 63, 64, 65], optimizada: true, vendedores: true, orden: 'frecuencia nueva, orden optimizado' } };
   const propuesta = () => RUTAS_PROPUESTA[esc];
   const nZonas = () => propuesta().rutas.length;
-  const nomZona = z => `Ruta ${propuesta().rutas[z - 1]}`;
-  const cortoZona = z => `R${propuesta().rutas[z - 1]}`;
+  const nomZona = z => !propuesta().rutas[z - 1] ? 'Sin zona' : `${propuesta().vendedores ? 'Vendedor' : 'Ruta'} ${propuesta().rutas[z - 1]}`;
+  const cortoZona = z => `${propuesta().vendedores ? 'V' : 'R'}${propuesta().rutas[z - 1]}`;
   const nomEsc = e => RUTAS_PROPUESTA[e].nombre;
 
   // ---------- Mapa ----------
@@ -386,7 +392,7 @@
     const cs = porManzana[id];
     box.textContent = '';
     const add = (t, b) => { const el = document.createElement(b ? 'b' : 'div'); el.textContent = t; box.appendChild(el); };
-    add(`${nomZona(A.zona[id])} · ${DIAS[A.dia[id] - 1]}`, true);
+    add(`${nomZona(A.zona[id])} · ${nomDia(A.dia[id])}`, true);
     add(`${peso[id]} cliente${peso[id] === 1 ? '' : 's'}`);
     const SEM = v => v.sem.size === 4 ? 'semanal' : v.sem.size === 2 ? `semanas ${[...v.sem].sort().join(' y ')}` : `semana ${[...v.sem][0]}`;
     for (const c of cs.slice(0, 8)) add(`#${c.codigo} ${c.cliente} · V${c.vendedor}${visDe(c) ? ' · ' + SEM(visDe(c)) : ''}`);
@@ -419,7 +425,7 @@
     $('#ck-orden-prop').addEventListener('change', () => { if (rutaActual) armarRuta(); });
     $('#btn-ruta-csv').addEventListener('click', exportarRuta);
     $('#btn-ruta-quitar').addEventListener('click', quitarRuta);
-    const rd = $('#ruta-dia'); DIAS.forEach((d, i) => rd.appendChild(new Option(d, i + 1)));
+    const rd = $('#ruta-dia'); DIAS.forEach((d, i) => rd.appendChild(new Option(d, i + 1))); rd.appendChild(new Option('Sábado', 6));
     $('#buscar').addEventListener('input', buscar);
     document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); deshacer(); } });
     window.addEventListener('beforeunload', e => { if (contarPendientes()) { e.preventDefault(); e.returnValue = ''; } });
@@ -477,7 +483,7 @@
     let items = [];
     if (vista === 'dias') { $('#destino-tit').textContent = semanaSel ? `Días (visitas de la semana ${semanaSel})` : 'Días (clientes del ciclo)'; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     else if (vista === 'zonasDia') { $('#destino-tit').textContent = `Zonas del ${DIAS[diaSel].toLowerCase()}`; for (let z = 1; z <= nZonas(); z++) items.push({ g: z, t: nomZona(z), extra: `${num(tot.get(z) || 0)} en ${semanaSel ? 'la semana ' + semanaSel : 'el ciclo'}` }); }
-    else { $('#destino-tit').textContent = `Días de ${nomZona(zonaSel).replace('Ruta', 'la ruta')} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
+    else { $('#destino-tit').textContent = `Días de ${nomZona(zonaSel).replace('Ruta', 'la ruta').replace('Vendedor', 'el vendedor')} · ${num(tot.get(zonaSel) || 0)} clientes`; items = DIAS.map((d, i) => ({ g: i + 1, t: d })); }
     const vals = items.map(it => c.get(it.g) || 0), prom = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
     for (const it of items) {
       const d = document.createElement('div');
@@ -536,7 +542,7 @@
     for (const c of clientes.filter(c => c.codigo === q || c.cliente.toLowerCase().includes(q)).slice(0, 8)) {
       const b = document.createElement('button'); b.type = 'button';
       const A = asig[esc];
-      b.textContent = `#${c.codigo} ${c.cliente} · ${nomZona(A.zona[c.manzana]).toLowerCase()} · ${DIAS[A.dia[c.manzana] - 1].toLowerCase()}`;
+      b.textContent = `#${c.codigo} ${c.cliente} · ${nomZona(A.zona[c.manzana]).toLowerCase()} · ${nomDia(A.dia[c.manzana]).toLowerCase()}`;
       b.addEventListener('click', () => { map.setView([c.lat, c.lng], 17); mostrarInfo(c.manzana); });
       box.appendChild(b);
     }
@@ -643,7 +649,7 @@
     const fmt = x => x.toLocaleString('es-AR', { maximumFractionDigits: 1 });
     const largo = real ? `${fmt(tramos.reduce((a, t) => a + t[0], 0) / 1000)} km y ${Math.round(tramos.reduce((a, t) => a + t[1], 0) / 60)} min de manejo por calle (auto o moto, sin contar el tiempo en cada cliente)`
       : `unos ${fmt(tot * 1.3)} km estimados (línea recta × 1,3)`;
-    $('#ruta-info').textContent = `${nomZona(z)} · ${DIAS[d - 1]}${deProp ? ` · semana ${semanaSel}, ${propuesta().optimizada ? 'orden WW611' : ordenProp ? 'orden que trae ZZ' : 'orden optimizado'}` : ''}: ${o.length} clientes, ${largo} del primero al último.`;
+    $('#ruta-info').textContent = `${nomZona(z)} · ${nomDia(d)}${deProp ? ` · semana ${semanaSel}, ${propuesta().optimizada ? propuesta().orden : ordenProp ? 'orden que trae ZZ' : 'orden optimizado'}` : ''}: ${o.length} clientes, ${largo} del primero al último.`;
     $('#btn-ruta-csv').disabled = $('#btn-ruta-quitar').disabled = false;
   }
   function quitarRuta() {
@@ -657,7 +663,7 @@
     const esc_ = v => /[",;\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
     const filas = [['orden', 'codigo', 'cliente', 'vendedor_actual', 'lat', 'lng', 'mapa']];
     o.forEach((c, i) => filas.push([i + 1, c.codigo, c.cliente, c.vendedor, c.lat, c.lng, `https://www.google.com/maps?q=${c.lat},${c.lng}`]));
-    descargar(`ruta_${cortoZona(z).toLowerCase()}${semanaSel ? '_semana' + semanaSel : ''}_${DIAS[d - 1].toLowerCase()}_propuesta_${propuesta().clave}.csv`, '\ufeff' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
+    descargar(`ruta_${cortoZona(z).toLowerCase()}${semanaSel ? '_semana' + semanaSel : ''}_${nomDia(d).toLowerCase()}_propuesta_${propuesta().clave}.csv`, '\ufeff' + filas.map(f => f.map(esc_).join(';')).join('\n'), 'text/csv');
   }
 
   iniciar();
